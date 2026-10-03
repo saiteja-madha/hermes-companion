@@ -1,0 +1,77 @@
+# Voice device verification plan
+
+Source implementation is not proof of iOS background behavior. Run this matrix
+on the minimum supported physical iPhone before calling background or locked
+voice verified. Use two distinguishable test gateways named **Linux** and
+**Mac**, and configure each to answer with its endpoint name.
+
+## Build gate on macOS
+
+- [ ] Regenerate the Xcode project from `project.yml` and confirm the diff is
+  expected.
+- [ ] Build the app and widget targets with the intended signing team.
+- [ ] Run all `HermesCompanionTests`; preserve the `.xcresult` artifact.
+- [ ] Confirm the built app contains `UIBackgroundModes = audio, fetch` and the
+  app-group entitlement shared with the widget extension.
+- [ ] Resolve all App Intents metadata/indexing diagnostics.
+
+## Endpoint and Siri routing
+
+- [ ] “Start Hermes” opens the configured default endpoint from a terminated
+  app, a warm backgrounded app, and an already-open app.
+- [ ] “Start Hermes on Linux” and “Start Hermes on Mac” each show the named
+  target before the microphone begins listening.
+- [ ] With Linux offline, a Linux-specific request reports Linux unavailable
+  and sends zero traffic to Mac.
+- [ ] Remove a saved endpoint, then invoke its previously indexed shortcut;
+  confirm no fallback command is sent.
+- [ ] Switch the in-app endpoint during listening, thinking, and speaking;
+  each case must end voice mode before another endpoint can receive audio.
+
+## Background and lock screen
+
+- [ ] Start voice mode in the foreground, press the side button while listening,
+  speak a command, hear the complete response, and complete a second turn.
+- [ ] Repeat by switching to another application instead of locking.
+- [ ] Lock while Hermes is thinking for 5, 30, and 90 seconds; confirm the
+  response is spoken or record the exact suspension/failure behavior.
+- [ ] Leave listening idle for more than one minute. Confirm recognition
+  restarts without changing endpoints after the framework duration limit.
+- [ ] End voice mode, lock the phone, and confirm the microphone privacy
+  indicator and audio session both stop.
+- [ ] Enable “Hey Hermes,” background the app without opening voice mode, and
+  confirm wake listening does not continue.
+
+## Audio routes and interruptions
+
+- [ ] Repeat a two-turn locked-screen conversation on the built-in microphone,
+  wired audio (if available), AirPods, and a Bluetooth car/headset route.
+- [ ] Connect and disconnect Bluetooth while listening and while speaking;
+  confirm bounded recovery without duplicate turns.
+- [ ] Receive and decline a phone/FaceTime call; resume only when iOS recommends
+  it and confirm the pending transcript is not submitted twice.
+- [ ] Accept and end a call; foreground Hermes and verify the explicit recovery
+  path or clear paused-state guidance.
+- [ ] Invoke Siri while Hermes is speaking. Confirm Siri’s interruption does not
+  cause Hermes to resume against the system recommendation.
+- [ ] Speak over TTS. Confirm barge-in stops the response without false triggers
+  from the device speaker at normal and maximum volume.
+
+## Network and session isolation
+
+- [ ] Capture requests at both gateways. For 20 alternating Linux/Mac launches,
+  assert each transcript appears exactly once at only the named endpoint.
+- [ ] Confirm Linux and Mac restore different active Hermes session IDs after
+  app termination and endpoint switching.
+- [ ] Disable Wi-Fi/Tailscale during a turn, restore it, and confirm retries stay
+  pinned to the original endpoint.
+- [ ] Leave one endpoint offline while conversing with the other; health checks
+  for the offline endpoint must not disrupt the active voice session.
+- [ ] Rotate one endpoint credential and confirm the other endpoint’s Keychain
+  record and active session remain unchanged.
+
+## Evidence to record
+
+For each failure, record the device model, iOS build, audio route, app commit,
+endpoint, foreground/background/locked state, and relevant `FileLogger` lines.
+Do not classify a row as passed from simulator behavior alone.

@@ -128,3 +128,74 @@ endpoint.
 2. Exercise default, Linux-specific and Mac-specific Siri phrases on device.
 3. Refactor background audio lifecycle without weakening endpoint pinning.
 4. Add the endpoint-aware ActivityKit target and state coordinator.
+
+## 2026-10-03 — Phase 3 implemented in source: background voice continuity
+
+### Existing behavior reused
+
+- The app already declares the `audio` background mode in both `project.yml`
+  and the generated `Sources/Info.plist`.
+- Voice mode already owns a `.playAndRecord` audio session, an `AVAudioEngine`
+  input tap, on-device `SFSpeechRecognizer`, system TTS, route-change recovery,
+  and audio-interruption observation.
+- `AppStore.beginBackgroundKeepAlive()` supplies the ordinary finite background
+  task window for an in-flight Hermes network turn without changing audio.
+
+### Changes
+
+- Removed the deliberate `stopConversation()` on
+  `UIApplication.didEnterBackgroundNotification`. Only an explicitly active
+  conversation is preserved; idle voice mode gains no background microphone.
+- Kept the optional “Hey Hermes” listener foreground-only and prevented it from
+  reclaiming the shared audio session when an active conversation returns from
+  the background.
+- Added a per-conversation UUID. Delayed recovery work verifies this generation
+  before restarting the microphone, preventing an old interruption callback
+  from attaching itself to a newly started conversation.
+- Added foreground recovery when iOS returns with a stopped audio engine and no
+  listening, thinking, or speaking phase still active.
+- Changed the conversation session to `.playAndRecord` / `.voiceChat`, retaining
+  speaker routing and ducking behavior.
+- During a remote Hermes turn, speech recognition now stops but the existing
+  audio input engine remains active. This keeps legitimate audio I/O alive while
+  the app is backgrounded and also makes the pre-existing TTS barge-in level
+  monitor receive actual samples. No second transcription is accepted while the
+  first turn is in flight.
+- Interruption recovery now respects `shouldResume`; otherwise the conversation
+  remains explicitly paused and tells the user how to resume.
+- Corrected the microphone permission copy: “Hey Hermes” is supported only in
+  the foreground, while a conversation the user explicitly starts may continue.
+- Added pure policy tests proving that background preservation requires an
+  active conversation and that foreground recovery cannot race listening,
+  thinking, or speaking.
+
+### Platform evidence and limits
+
+Apple documents that `.playAndRecord` audio can continue while the screen is
+locked when the app declares the `audio` background mode, and that interruption
+recovery should inspect the system resumption recommendation. Apple also
+documents recognition availability and duration limits. These establish the
+intended configuration, not device-level proof:
+
+- <https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/playandrecord>
+- <https://developer.apple.com/documentation/avfaudio/handling-audio-interruptions>
+- <https://developer.apple.com/documentation/speech/sfspeechrecognizer>
+
+### Verification state
+
+- `git diff --check`: passed during implementation.
+- Source search confirms no background handler still ends an explicit voice
+  conversation.
+- iOS compile/unit tests: unavailable in this Linux workspace because Xcode and
+  the Swift toolchain are not installed.
+- Background, lock-screen, Bluetooth, Siri-handoff, phone-call interruption,
+  echo cancellation and barge-in behavior remain **implemented but unverified**
+  until the matrix in `VOICE_DEVICE_TEST_PLAN.md` passes on a physical iPhone.
+
+### Next work after this slice
+
+1. Add endpoint-aware ActivityKit state and a Dynamic Island/Lock Screen UI.
+2. Add safe interactive mute/resume/end controls without exposing credentials.
+3. Execute the macOS compile/unit gate and physical-device test matrix.
+4. Tune audio policy only from measured device failures; do not add a paid STT
+   service or another backend pre-emptively.

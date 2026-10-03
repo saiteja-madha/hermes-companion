@@ -231,7 +231,12 @@ struct ChatView: View {
         .onChange(of: scenePhase) { _, phase in
            switch phase {
            case .active:
-               wakePhraseListener.resumeFromBackground()
+               // Explicit voice mode owns the shared AVAudioSession. Starting
+               // the wake listener here would replace its category and race
+               // the foreground recovery in VoiceConversationManager.
+               if !showVoicePage, !voiceConversation.isConversing {
+                   wakePhraseListener.resumeFromBackground()
+               }
                if SharedDefaults.shared.bool(forKey: VoiceActivationControlConstants.openVoicePageKey) {
                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                        openRequestedVoiceConversation()

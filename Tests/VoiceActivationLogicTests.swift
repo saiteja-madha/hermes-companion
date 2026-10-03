@@ -3,6 +3,49 @@ import AVFoundation
 @testable import HermesCompanion
 
 final class VoiceActivationLogicTests: XCTestCase {
+    func testBackgroundLifecyclePreservesOnlyAnExplicitConversation() {
+        XCTAssertTrue(
+            VoiceConversationLifecyclePolicy.shouldPreserveConversationInBackground(
+                isConversing: true
+            )
+        )
+        XCTAssertFalse(
+            VoiceConversationLifecyclePolicy.shouldPreserveConversationInBackground(
+                isConversing: false
+            ),
+            "Background audio must not turn idle voice mode into an always-on microphone"
+        )
+    }
+
+    func testForegroundRecoveryStartsOnlyFromAnIdleConversationPhase() {
+        XCTAssertTrue(VoiceConversationLifecyclePolicy.shouldRecoverListening(
+            isConversing: true, isListening: false, isSpeaking: false, isThinking: false
+        ))
+        XCTAssertFalse(VoiceConversationLifecyclePolicy.shouldRecoverListening(
+            isConversing: false, isListening: false, isSpeaking: false, isThinking: false
+        ))
+        XCTAssertFalse(VoiceConversationLifecyclePolicy.shouldRecoverListening(
+            isConversing: true, isListening: true, isSpeaking: false, isThinking: false
+        ))
+        XCTAssertFalse(VoiceConversationLifecyclePolicy.shouldRecoverListening(
+            isConversing: true, isListening: false, isSpeaking: true, isThinking: false
+        ))
+        XCTAssertFalse(VoiceConversationLifecyclePolicy.shouldRecoverListening(
+            isConversing: true, isListening: false, isSpeaking: false, isThinking: true
+        ))
+    }
+
+    @MainActor
+    func testBackgroundTransitionDoesNotEndExplicitConversation() {
+        let manager = VoiceConversationManager()
+        manager.isConversing = true
+
+        manager.handleAppBackground()
+
+        XCTAssertTrue(manager.isConversing)
+        manager.stopConversation()
+    }
+
     func testVoiceEndpointBindingMatchesOnlyCapturedServer() {
         let linuxID = UUID()
         let linux = ConnectionConfig(endpointID: linuxID, baseURL: "https://linux-hermes.example/", apiKey: "linux-key", label: "Linux")

@@ -13,6 +13,7 @@ import Speech
 @MainActor
 final class VoiceConversationManager: ObservableObject {
     @Published var isConversing = false
+    @Published private(set) var conversationID: UUID?
     @Published var isListening = false
     @Published var isSpeaking = false
     @Published var isThinking = false
@@ -89,18 +90,40 @@ final class VoiceConversationManager: ObservableObject {
             selector: #selector(handleAppBackground),
             name: UIApplication.didEnterBackgroundNotification,
             object: nil
-          )
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
 #endif
     }
 
 #if os(iOS)
-    /// Release audio session when app backgrounds so other apps
-    /// (YouTube, Music) can play normally.
-    @objc private func handleAppBackground() {
+    /// An explicitly started conversation owns a background audio session.
+    /// Preserve it across app switches and device locking. The separate
+    /// wake-phrase listener is still paused by `ChatView` in the background.
+    @objc func handleAppBackground() {
+        guard VoiceConversationLifecyclePolicy.shouldPreserveConversationInBackground(
+            isConversing: isConversing
+        ) else { return }
+        FileLogger.shared.log("VoiceManager: app backgrounded; preserving explicit voice conversation")
+    }
+
+    /// A route or Speech task can be invalidated while the process is
+    /// suspended. Rebuild listening when returning to the foreground only if
+    /// no response, playback, or recording phase currently owns the turn.
+    @objc private func handleAppForeground() {
         guard isConversing else { return }
-        FileLogger.shared.log("VoiceManager: app backgrounded, stopping conversation to release audio")
-        stopConversation()
-      }
+
+        if isListening && !audioEngine.isRunning {
+            FileLogger.shared.log("VoiceManager: foregrounded with a stopped audio engine; rebuilding listening")
+            stopListening()
+        }
+
+        scheduleListeningRecovery(reason: "foreground return", delayNanoseconds: 250_000_000)
+    }
 #endif
 
     /// Car Bluetooth / AirPods connect or drop mid-listen: the engine stays
@@ -146,14 +169,15 @@ final class VoiceConversationManager: ObservableObject {
              stopListening()
              if !isConversing { stopSpeaking() }
          case .ended:
-            // Auto-resume if still in conversation mode
-            if isConversing {
-                Task { @MainActor [weak self] in
-                    guard let self = self else { return }
-                    try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s for session to settle
-                    self.startListening()
+            let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            guard options.contains(.shouldResume) else {
+                if isConversing {
+                    voiceError = "Voice input was interrupted. Return to Hermes or tap the microphone to resume."
                 }
+                return
             }
+            scheduleListeningRecovery(reason: "audio interruption ended", delayNanoseconds: 300_000_000)
         @unknown default:
             break
         }
@@ -207,6 +231,9 @@ final class VoiceConversationManager: ObservableObject {
         }
 
         pendingConversationStartID = nil
+        if !isConversing {
+            conversationID = UUID()
+        }
         isConversing = true
         voiceError = nil
         self.onTranscriptionComplete = onTranscription
@@ -218,6 +245,7 @@ final class VoiceConversationManager: ObservableObject {
         remoteTurnID = nil
         pendingConversationStartID = nil
         isConversing = false
+        conversationID = nil
         stopListening()
         stopSpeaking()
         stopBargeInMonitoring()
@@ -362,7 +390,7 @@ final class VoiceConversationManager: ObservableObject {
         // Configure audio session
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.duckOthers, .defaultToSpeaker])
+            try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.duckOthers, .defaultToSpeaker])
             try? audioSession.setPreferredSampleRate(44_100)
             try? audioSession.setPreferredInputNumberOfChannels(1)
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
@@ -466,8 +494,8 @@ final class VoiceConversationManager: ObservableObject {
         }
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            guard let self = self, let recognitionRequest = self.recognitionRequest else { return }
-            recognitionRequest.append(buffer)
+            guard let self else { return }
+            self.recognitionRequest?.append(buffer)
 
             // Calculate RMS audio level for visualizer.
             if buffer.frameLength > 0 {
@@ -549,7 +577,10 @@ final class VoiceConversationManager: ObservableObject {
         audioLevel = 0
     }
 
-    func stopListening(resetFinalizing: Bool = true) {
+    func stopListening(
+        resetFinalizing: Bool = true,
+        keepAudioEngineRunning: Bool = false
+    ) {
         isListening = false
         stopLevelMonitoring()
         stopSilenceTimer()
@@ -557,22 +588,33 @@ final class VoiceConversationManager: ObservableObject {
             isFinalizing = false
         }
 
+        let preserveInput = keepAudioEngineRunning
+            && isConversing
+            && ownsAudioSession
+            && audioEngine.isRunning
+            && hasInstalledInputTap
+
         // CRITICAL: Remove the tap FIRST, before stopping the engine or
         // finalizing the recognition request. This prevents the tap callback
         // from firing after endAudio() and crashing.
-        removeInputTapIfNeeded()
+        if !preserveInput {
+            removeInputTapIfNeeded()
+        }
 
-        if audioEngine.isRunning {
+        if audioEngine.isRunning && !preserveInput {
             audioEngine.stop()
         }
 
         // Cancel the recognition task BEFORE endAudio to stop callbacks.
-        // Then endAudio and nil out the request.
-        isStoppingListening = recognitionTask != nil
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest?.endAudio()
+        // Detach the request first when the input tap stays installed, so the
+        // realtime callback cannot append another buffer after endAudio().
+        let requestToFinish = recognitionRequest
         recognitionRequest = nil
+        let taskToCancel = recognitionTask
+        recognitionTask = nil
+        isStoppingListening = taskToCancel != nil
+        taskToCancel?.cancel()
+        requestToFinish?.endAudio()
 
         if !isConversing && !isSpeaking { releaseAudioSessionIfOwned() }
         // Active voice turns retain ownership between listening and speaking.
@@ -630,7 +672,11 @@ final class VoiceConversationManager: ObservableObject {
         isFinalizing = true
         recognitionRetryCount = 0
         voiceError = nil
-        stopListening(resetFinalizing: false)
+        // Keep audio I/O alive while Hermes processes the turn. This preserves
+        // an explicitly active background conversation and supplies input
+        // levels to the existing TTS barge-in monitor. Recognition is stopped,
+        // so no second command can be transcribed while this turn is in flight.
+        stopListening(resetFinalizing: false, keepAudioEngineRunning: true)
 
         FileLogger.shared.log("VoiceManager: remote mode finalize for '\(finalText)'")
         isThinking = true
@@ -825,6 +871,33 @@ final class VoiceConversationManager: ObservableObject {
 
         let description = error.localizedDescription.lowercased()
         return description.contains("canceled") || description.contains("cancelled")
+    }
+
+    private func scheduleListeningRecovery(reason: String, delayNanoseconds: UInt64) {
+        guard VoiceConversationLifecyclePolicy.shouldRecoverListening(
+            isConversing: isConversing,
+            isListening: isListening,
+            isSpeaking: isSpeaking,
+            isThinking: isThinking
+        ) else { return }
+
+        let expectedConversationID = conversationID
+        Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            } catch { return }
+            guard let self,
+                  self.conversationID == expectedConversationID,
+                  VoiceConversationLifecyclePolicy.shouldRecoverListening(
+                    isConversing: self.isConversing,
+                    isListening: self.isListening,
+                    isSpeaking: self.isSpeaking,
+                    isThinking: self.isThinking
+                  )
+            else { return }
+            FileLogger.shared.log("VoiceManager: recovering listening after \(reason)")
+            self.startListening()
+        }
     }
 }
 

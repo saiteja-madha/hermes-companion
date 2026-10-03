@@ -8,6 +8,26 @@ enum VoiceEndpointingPolicy {
     static let silenceTimeout: TimeInterval = 1.5
 }
 
+/// Pure lifecycle decisions for an explicitly started voice conversation.
+///
+/// The optional wake-phrase listener has its own foreground-only lifecycle in
+/// `ChatView`; these rules apply only after the user has deliberately opened
+/// voice mode (including through Siri or an App Shortcut).
+enum VoiceConversationLifecyclePolicy {
+    static func shouldPreserveConversationInBackground(isConversing: Bool) -> Bool {
+        isConversing
+    }
+
+    static func shouldRecoverListening(
+        isConversing: Bool,
+        isListening: Bool,
+        isSpeaking: Bool,
+        isThinking: Bool
+    ) -> Bool {
+        isConversing && !isListening && !isSpeaking && !isThinking
+    }
+}
+
 /// Immutable identity captured when a voice conversation starts.
 ///
 /// Voice turns must stay attached to this endpoint even if another part of the
