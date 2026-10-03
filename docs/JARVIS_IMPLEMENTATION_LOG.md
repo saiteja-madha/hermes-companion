@@ -267,8 +267,8 @@ intended configuration, not device-level proof:
 1. Compile and run tests on macOS; correct any ActivityKit/App Intents metadata
    diagnostics before adding polish.
 2. Execute the endpoint, Siri, background audio and Dynamic Island device matrix.
-3. Add bounded reconnect state only if device/network tests expose a gap; never
-   auto-fail over to the other Hermes endpoint.
+3. Keep any later recovery changes endpoint-pinned; never auto-fail over or
+   automatically replay a command on the other Hermes endpoint.
 
 ## 2026-10-03 — Phase 5 implemented in source: atomic voice-turn routing
 
@@ -314,3 +314,53 @@ client even though the UI-level check had passed.
   iOS SDK.
 - The physical two-stub-server alternating-endpoint test remains the final proof
   that no command reaches the nonselected machine.
+
+## 2026-10-03 — Phase 6 implemented in source: endpoint-pinned recovery
+
+### Gap found
+
+The Live Activity model declared a reconnecting phase, but voice failures went
+straight from thinking to spoken error and listening. There was no bounded
+same-endpoint recovery action, and availability failures could not be separated
+from authentication or validation failures.
+
+### Changes
+
+- Added `VoiceEndpointRecoveryPolicy`. Only transport failures, connection
+  refusal, and HTTP 502/503/504-class availability failures trigger endpoint
+  probes. Authentication, protocol and model/validation failures remain normal
+  errors.
+- Added a maximum of three health probes with short bounded backoff. Every probe
+  requires the immutable endpoint binding and exact `HermesAPIClient` object to
+  still own `AppStore` before and after awaiting the network.
+- Recovery never changes endpoints, creates a replacement client, or resends the
+  transcript. A failed POST can have reached Hermes before its response was
+  lost, so an automatic replay could execute tools twice.
+- Added `isReconnecting` to `VoiceConversationManager` and connected it to the
+  existing Live Activity `reconnecting` phase and full-screen status.
+- Added an explicit `RETRY <ENDPOINT>` control after an unsuccessful recovery.
+  It checks only the displayed endpoint and stops voice if endpoint ownership
+  changed.
+- Health results update only the selected endpoint's status. Linux being down
+  cannot select, probe, or send to Mac, and vice versa.
+
+### Tests added
+
+- Recovery phase precedence in ActivityKit state.
+- Availability-error classification and bounded retry constants.
+- Exact remote-turn ownership for recovery state and cancellation without
+  transcript replay.
+- An `AppStore` integration check proving a mismatched endpoint probe returns
+  before networking and does not write health state.
+
+### Verification state
+
+- `git diff --check`: passed during implementation.
+- Source-level endpoint/client guards exist on every probe and both sides of
+  every awaited health check.
+- Swift/iOS compilation remains unavailable in this Linux runner.
+- Physical verification must still demonstrate the reconnecting UI, locked
+  audio behavior, and zero cross-routing with the actual Linux and Mac servers.
+- Added `scripts/verify-jarvis-ios.sh` as the reproducible macOS gate. It builds
+  and runs all unit tests, retains an `.xcresult`, then verifies the built app's
+  Live Activity flag, audio background mode and embedded widget extension.

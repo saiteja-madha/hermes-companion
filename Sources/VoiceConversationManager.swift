@@ -17,6 +17,7 @@ final class VoiceConversationManager: ObservableObject {
     @Published var isListening = false
     @Published var isSpeaking = false
     @Published var isThinking = false
+    @Published private(set) var isReconnecting = false
     @Published private(set) var isMuted = false
     @Published var transcribedText = ""
     @Published var spokenResponse = ""
@@ -149,7 +150,8 @@ final class VoiceConversationManager: ObservableObject {
                   self.isConversing,
                   !self.isListening,
                   !self.isSpeaking,
-                  !self.isThinking
+                  !self.isThinking,
+                  !self.isReconnecting
             else { return }
             self.startListening()
         }
@@ -253,6 +255,7 @@ final class VoiceConversationManager: ObservableObject {
         stopSpeaking()
         stopBargeInMonitoring()
         isThinking = false
+        isReconnecting = false
         isFinalizing = false
         voiceError = nil
         onTranscriptionComplete = nil
@@ -263,6 +266,7 @@ final class VoiceConversationManager: ObservableObject {
         let id = UUID()
         remoteTurnID = id
         isThinking = true
+        isReconnecting = false
         voiceError = nil
         return id
     }
@@ -275,6 +279,7 @@ final class VoiceConversationManager: ObservableObject {
         FileLogger.shared.log("completeRemoteTurn called with response: \(String(describing: response?.prefix(120)))")
         remoteTurnID = nil
         isThinking = false
+        isReconnecting = false
         isFinalizing = false
         
         let cleanResponse = Self.normalizedRemoteResponse(response)
@@ -304,13 +309,14 @@ final class VoiceConversationManager: ObservableObject {
         FileLogger.shared.log("failRemoteTurn called: \(message)")
         remoteTurnID = nil
         isThinking = false
+        isReconnecting = false
         isFinalizing = false
         voiceError = message
 
         // Only speak the error if the voice conversation is still active.
         // If the user closed the voice page, don't speak into an empty room.
         guard isConversing else { return }
-        speakResponse(message)
+        speakResponse(message, preservingError: true)
 
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -324,6 +330,46 @@ final class VoiceConversationManager: ObservableObject {
         }
     }
 
+    /// Move an existing failed turn, or a user-requested retry, into a bounded
+    /// same-endpoint reachability check. No transcript is retained or replayed.
+    func beginEndpointRecovery(for existingTurnID: UUID? = nil) -> UUID? {
+        guard isConversing else { return nil }
+        if let existingTurnID, remoteTurnID != existingTurnID { return nil }
+        let id = existingTurnID ?? UUID()
+        remoteTurnID = id
+        isThinking = false
+        isReconnecting = true
+        isFinalizing = false
+        voiceError = nil
+        stopListening()
+        stopSpeaking()
+        return id
+    }
+
+    func completeEndpointRecovery(
+        _ id: UUID,
+        endpointName: String,
+        isReachable: Bool,
+        failureMessage: String? = nil
+    ) {
+        guard isCurrentRemoteTurn(id), isReconnecting else { return }
+        remoteTurnID = nil
+        isReconnecting = false
+        isThinking = false
+        isFinalizing = false
+
+        let message: String
+        if isReachable {
+            voiceError = nil
+            message = "\(endpointName) is reachable again. The previous command was not replayed. Please repeat it if needed."
+        } else {
+            message = failureMessage.map { "\(endpointName) is still unavailable. \($0)" }
+                ?? "\(endpointName) is still unavailable. Check its network or Tailscale connection, then retry this endpoint."
+            voiceError = message
+        }
+        speakResponse(message, preservingError: !isReachable)
+    }
+
     /// Forcefully cancel the current thinking / network wait and return to
     /// listening. Called by the UI when the user taps "Stop" while waiting for
     /// a remote response.
@@ -331,6 +377,7 @@ final class VoiceConversationManager: ObservableObject {
         guard isConversing else { return }
         remoteTurnID = nil
         isThinking = false
+        isReconnecting = false
         isFinalizing = false
         voiceError = nil
         stopListening()
@@ -366,6 +413,7 @@ final class VoiceConversationManager: ObservableObject {
     func startListening() {
         guard isConversing else { FileLogger.shared.log("VoiceManager: startListening bail — not conversing"); return }
         guard !isMuted else { FileLogger.shared.log("VoiceManager: startListening bail — microphone muted"); return }
+        guard !isReconnecting else { FileLogger.shared.log("VoiceManager: startListening bail — endpoint recovery active"); return }
         // If currently speaking, stop TTS first (barge-in by button tap)
         if isSpeaking {
             stopSpeaking()
@@ -424,7 +472,7 @@ final class VoiceConversationManager: ObservableObject {
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 500_000_000)
                     guard let self, self.isConversing, !self.isListening,
-                          !self.isSpeaking, !self.isThinking else { return }
+                          !self.isSpeaking, !self.isThinking, !self.isReconnecting else { return }
                     self.startListening()
                 }
             } else {
@@ -474,7 +522,8 @@ final class VoiceConversationManager: ObservableObject {
                                   self.isConversing,
                                   !self.isListening,
                                   !self.isSpeaking,
-                                  !self.isThinking
+                                  !self.isThinking,
+                                  !self.isReconnecting
                             else { return }
                             self.startListening()
                         }
@@ -768,7 +817,7 @@ final class VoiceConversationManager: ObservableObject {
 
     /// Speak a text response using AVSpeechSynthesizer.
     /// Automatically resumes listening after speech completes.
-    func speakResponse(_ text: String) {
+    func speakResponse(_ text: String, preservingError: Bool = false) {
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanText.isEmpty, isConversing else {
             return
@@ -782,7 +831,7 @@ final class VoiceConversationManager: ObservableObject {
         isFinalizing = false
         spokenResponse = cleanText
         isSpeaking = true
-        voiceError = nil
+        if !preservingError { voiceError = nil }
         speakWithSystemTTS(cleanText)
     }
     
@@ -900,6 +949,7 @@ final class VoiceConversationManager: ObservableObject {
             isListening: isListening,
             isSpeaking: isSpeaking,
             isThinking: isThinking,
+            isReconnecting: isReconnecting,
             isMuted: isMuted
         ) else { return }
 
@@ -915,6 +965,7 @@ final class VoiceConversationManager: ObservableObject {
                     isListening: self.isListening,
                     isSpeaking: self.isSpeaking,
                     isThinking: self.isThinking,
+                    isReconnecting: self.isReconnecting,
                     isMuted: self.isMuted
                   )
             else { return }

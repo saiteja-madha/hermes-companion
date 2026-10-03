@@ -49,6 +49,7 @@ enum HermesVoiceActivityStateResolver {
         isListening: Bool,
         isSpeaking: Bool,
         isThinking: Bool,
+        isReconnecting: Bool = false,
         isMuted: Bool,
         hasError: Bool,
         hasActiveTool: Bool,
@@ -57,6 +58,8 @@ enum HermesVoiceActivityStateResolver {
         let phase: HermesVoiceActivityPhase
         if !isConversing {
             phase = .ended
+        } else if isReconnecting {
+            phase = .reconnecting
         } else if hasError, !isSpeaking {
             phase = .failed
         } else if isSpeaking {

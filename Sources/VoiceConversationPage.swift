@@ -53,6 +53,7 @@ struct VoiceConversationPage: View {
     let endpoint: VoiceEndpointBinding
     @ObservedObject var store: AppStore
     var onVoiceTranscription: ((String) -> Void)? = nil
+    var onRetryEndpoint: (() -> Void)? = nil
     var onClose: (() -> Void)? = nil
 
     @State private var preset: CyberpunkVoicePreset = .matrix
@@ -233,6 +234,7 @@ struct VoiceConversationPage: View {
     }
 
     private var statusLabel: String {
+        if voiceConversation.isReconnecting { return "RECONNECTING..." }
         if voiceConversation.isMuted { return "MIC MUTED" }
         if voiceConversation.isThinking { return "THINKING..." }
         if voiceConversation.isSpeaking { return "SPEAKING..." }
@@ -246,6 +248,26 @@ struct VoiceConversationPage: View {
     private var bottomControls: some View {
         // Keep the same mute/end controls in-app and in the expanded Live Activity.
         HStack(spacing: 26) {
+            if voiceConversation.voiceError != nil,
+               !voiceConversation.isReconnecting,
+               let onRetryEndpoint {
+                VStack(spacing: 7) {
+                    Button(action: onRetryEndpoint) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(preset.primary)
+                            .frame(width: 56, height: 56)
+                            .background(preset.primary.opacity(0.12), in: Circle())
+                            .overlay(Circle().stroke(preset.primary.opacity(0.5), lineWidth: 1))
+                    }
+                    .accessibilityLabel("Retry \(endpoint.displayName)")
+                    Text("RETRY \(endpoint.displayName.uppercased())")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(preset.primary)
+                        .lineLimit(1)
+                }
+            }
+
             VStack(spacing: 7) {
                 Button {
                     voiceConversation.setMuted(!voiceConversation.isMuted)
@@ -321,6 +343,7 @@ struct VoiceConversationPage: View {
             isListening: voiceConversation.isListening,
             isSpeaking: voiceConversation.isSpeaking,
             isThinking: voiceConversation.isThinking,
+            isReconnecting: voiceConversation.isReconnecting,
             isMuted: voiceConversation.isMuted,
             hasError: voiceConversation.voiceError != nil,
             hasActiveTool: activeTool,

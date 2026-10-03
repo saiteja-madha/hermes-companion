@@ -84,7 +84,7 @@ Status legend:
 | Modern voice UI | **Verified in source** — full-screen animated Matrix/CRT/orb interface | **Missing** — polished chat/dictation UI only | **Implemented, untested** | **Implemented, untested** | Missing |
 | Additional backend | Optional for core chat/voice; included bridge/patches are needed for some extended workspace/run features | Hermes WebUI/Hermes server; push updates may require server pairing | **Required** relay plus connector | **Required** relay plus connector; Mimo services for native Talk | Same WebUI-oriented backend |
 | Additional paid voice API | **None introduced by iPhone voice path**; Hermes model/provider can still have its own cost | None for on-device dictation; server STT may use configured service | **Yes/likely** — OpenAI Realtime voice session | **Potentially** — Mimo ASR/TTS; legacy OpenAI Realtime remains behind a flag | Same as old Hermex |
-| Offline endpoint handling | **Partial** — parallel health status, connection errors and reconnect path; voice fail path returns to listening | **Verified/strong** — connection identity, errors, server registry, cached state | **Partial** — relay/host health state | **Partial** — relay and gateway health/control state | Older, less complete handling |
+| Offline endpoint handling | **Implemented, untested in fork** — availability-class voice failures drive a bounded probe against the captured client, show `reconnecting`, offer explicit same-target retry, and never replay or fail over a command | **Verified/strong** — connection identity, errors, server registry, cached state | **Partial** — relay/host health state | **Partial** — relay and gateway health/control state | Older, less complete handling |
 
 ### Key source evidence
 
@@ -100,8 +100,8 @@ HermesCompanion evidence is in this repository:
   (`handleVoiceTranscription`).
 - Voice UI: `Sources/VoiceConversationPage.swift`.
 - Existing App Intent: `ControlWidget/VoiceActivationControl.swift`.
-- Existing extension declaration: `project.yml`; it contains a Control Widget
-  target and no ActivityKit target.
+- Extension declaration: `project.yml`; the existing Control Widget target now
+  also hosts the voice Live Activity, avoiding a second extension target.
 
 External candidates were inspected at the commits listed above. Important paths:
 
@@ -243,11 +243,11 @@ the privacy/state-machine lessons from the inspected candidates; it does not
 import their WebUI/relay coordinators or require their infrastructure:
 
 - immutable attributes: endpoint UUID and safe display label;
-- content state: connecting, listening, thinking, tool activity, speaking,
-  muted, reconnecting, ended;
+- content state: listening, thinking, tool activity, speaking, paused, failed,
+  reconnecting and ended;
 - exact endpoint/conversation `LiveActivityIntent` controls: mute/resume and end;
-- expanded endpoint identity and a deliberate “switch” action that opens the app
-  and ends the current voice session before selecting another endpoint.
+- expanded endpoint identity and an endpoint-scoped activity deep link that opens
+  the app through the same exact/no-fallback launch resolver.
 
 The activity coordinator observes `VoiceConversationManager` and generic
 `AppStore.toolEvents`, coalesces equal states, and never includes credentials,
@@ -255,13 +255,17 @@ endpoint URLs, prompts, transcripts, response text, tool names or tool output.
 
 ### 5. Reliability and endpoint recovery — medium, 3–5 developer-days
 
-Add endpoint-scoped reachability state and bounded backoff. An offline selected
-endpoint remains selected. Offer “Retry Linux”, “End session”, and “Open endpoint
-picker”; never silently send to Mac. Preserve unsent transcription locally only
-long enough to allow explicit retry and label it with endpoint UUID/session ID.
+Implemented in source: availability-class failures enter endpoint-scoped
+`reconnecting` state and perform at most three health probes with bounded
+backoff. The selected endpoint remains selected and the full-screen UI offers
+“Retry Linux” or “Retry Mac”. Mute/resume/end remain available; tapping the
+activity opens the exact endpoint in the app. No transcript is retained or
+automatically replayed because a lost POST response cannot prove the command did
+not reach Hermes. Recovery never silently sends to the other endpoint.
 
-Test concurrency: switch endpoint before transcription finalizes, while a request
-is streaming, during TTS, and during reconnect. Assert requests received by two
+Unit coverage proves endpoint/client and remote-turn ownership. Remaining device
+work: switch endpoint before transcription finalizes, while a request is
+streaming, during TTS, and during reconnect. Assert requests received by two
 stub servers and verify zero cross-routing.
 
 ### 6. Polish — optional after MVP, 2–5 developer-days
@@ -312,13 +316,15 @@ the React Native layer. There is no net reduction in work for this project.
   successful hands-free microphone start after Siri dismisses—especially while
   locked—requires physical-device validation. Do not represent it as guaranteed.
 - **Background speech recognition:** declaring audio background mode is necessary
-  but does not guarantee indefinite Speech recognition. Current source actively
-  stops voice on background, so this remains real work.
+  but does not guarantee indefinite Speech recognition. The fork now preserves
+  explicit conversations and audio I/O in the background, but Speech task
+  duration, lock-state suspension and route recovery remain device-unverified.
 - **Two endpoints:** endpoint URLs can change, session IDs can collide across
   servers, and one server may be much newer than the other. Use stable endpoint
   IDs and scope every cache, session, activity and pending request by endpoint.
 - **No automatic failover:** sending a Linux command to Mac because Linux is down
-  is unsafe. Recovery must remain endpoint-pinned.
+  is unsafe. Recovery remains endpoint-pinned. A bounded health probe never
+  replays the failed command because an interrupted POST may already have run.
 - **Authentication/network:** HTTP over a private VPN currently relies on broad
   ATS allowance. Prefer HTTPS or a private network such as Tailscale; never place
   API keys in defaults, logs, App Intent entities, URLs, or Live Activity state.
@@ -342,16 +348,16 @@ the React Native layer. There is no net reduction in work for this project.
 - [x] Reject/stop a voice turn when the active endpoint no longer matches.
 - [x] Migrate per-URL active sessions to per-endpoint-UUID session records.
 - [x] Pin voice routing to endpoint UUID and API client identity.
-- [ ] Add an explicit voice-session generation token shared with ActivityKit controls.
+- [x] Add an explicit voice-session generation token shared with ActivityKit controls.
 - [x] End voice before endpoint switching; require explicit restart on the new target.
 - [x] Add endpoint-aware App Entity and Siri/App Shortcut intents.
 - [x] Add a generic default shortcut plus an endpoint-parameterized shortcut.
 - [ ] Configure and device-test separate Linux and Mac Siri phrases.
-- [ ] Preserve an explicit voice audio session in supported background/lock states.
-- [ ] Add ActivityKit target and endpoint-aware Live Activity attributes/state.
-- [ ] Synchronize listening/thinking/tool/speaking/muted/reconnecting states.
-- [ ] Add mute/resume/end controls; make endpoint switch open the app safely.
-- [ ] Add offline state, bounded reconnect and explicit retry for the same endpoint.
+- [x] Preserve an explicit voice audio session in supported background/lock states (device verification pending).
+- [x] Add endpoint-aware Live Activity attributes/state to the existing widget target.
+- [x] Synchronize listening/thinking/tool/speaking/muted/reconnecting states.
+- [x] Add mute/resume/end controls; make endpoint-scoped activity taps open the app safely.
+- [x] Add offline state, bounded reconnect and explicit retry for the same endpoint.
 - [x] Never automatically fail over a command to the other Hermes endpoint.
 - [ ] Add two-server integration tests proving each command reaches only its target.
 - [ ] Test cold/warm Siri activation, lock screen, Bluetooth, interruption and offline cases on device.

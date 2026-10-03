@@ -189,6 +189,9 @@ struct ChatView: View {
                         onVoiceTranscription: { transcription in
                             handleVoiceTranscription(transcription, endpoint: endpoint)
                         },
+                        onRetryEndpoint: {
+                            retryVoiceEndpoint(endpoint)
+                        },
                         onClose: {
                             showVoicePage = false
                             voiceEndpoint = nil
@@ -692,10 +695,22 @@ struct ChatView: View {
 
             guard let responseMessage = responseMessage else {
                 FileLogger.shared.log("ChatView: no response message")
-                if let error = store.error, error.id != priorErrorID {
-                    voiceConversation.failRemoteTurn(message: error.message)
+                let failureMessage = store.error.flatMap { $0.id != priorErrorID ? $0.message : nil }
+                    ?? "Hermes did not respond. Please try again."
+                if store.lastChatFailureSupportsEndpointProbe,
+                   voiceConversation.beginEndpointRecovery(for: voiceTurn) != nil {
+                    let reachable = await store.probeVoiceEndpoint(
+                        endpoint: endpoint,
+                        client: voiceClient
+                    )
+                    voiceConversation.completeEndpointRecovery(
+                        voiceTurn,
+                        endpointName: endpoint.displayName,
+                        isReachable: reachable,
+                        failureMessage: reachable ? nil : failureMessage
+                    )
                 } else {
-                    voiceConversation.failRemoteTurn(message: "Hermes did not respond. Please try again.")
+                    voiceConversation.failRemoteTurn(message: failureMessage)
                 }
                 return
             }
@@ -713,6 +728,29 @@ struct ChatView: View {
                 FileLogger.shared.log("ChatView: empty response")
                 voiceConversation.failRemoteTurn(message: "Hermes returned an empty response.")
             }
+        }
+    }
+
+    @MainActor
+    private func retryVoiceEndpoint(_ endpoint: VoiceEndpointBinding) {
+        guard endpoint.matches(store.connectionConfig),
+              let client = store.apiClient,
+              let recoveryID = voiceConversation.beginEndpointRecovery()
+        else {
+            voiceConversation.stopConversation()
+            showVoicePage = false
+            voiceEndpoint = nil
+            store.error = AppError(message: "Voice mode stopped because the selected Hermes server changed. Confirm the target before retrying.")
+            return
+        }
+
+        Task {
+            let reachable = await store.probeVoiceEndpoint(endpoint: endpoint, client: client)
+            voiceConversation.completeEndpointRecovery(
+                recoveryID,
+                endpointName: endpoint.displayName,
+                isReachable: reachable
+            )
         }
     }
 

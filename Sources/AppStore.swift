@@ -21,6 +21,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var serverLatencyMs: Int?
     @Published private(set) var responseActivity = ""
     @Published private(set) var lastChatActivityAt: Date?
+    @Published private(set) var lastChatFailureSupportsEndpointProbe = false
     @Published var isStreaming = false
     @Published var streamingText = ""
     /// Live reasoning text (assistant.delta events tagged tool_name=_thinking).
@@ -1545,6 +1546,7 @@ final class AppStore: ObservableObject {
         requiredVoiceEndpoint: VoiceEndpointBinding? = nil,
         requiredVoiceClient: HermesAPIClient? = nil
     ) async -> ChatDisplayMessage? {
+        lastChatFailureSupportsEndpointProbe = false
         guard VoiceTurnRoutingPolicy.authorizes(
             endpoint: requiredVoiceEndpoint,
             capturedClient: requiredVoiceClient,
@@ -1631,6 +1633,7 @@ final class AppStore: ObservableObject {
             self.streamingThinking = ""
             self.endBackgroundTask()
             self.responseActivity = "Response stream stalled"
+            self.lastChatFailureSupportsEndpointProbe = true
             self.error = AppError(message: "Hermes stopped sending chat events and keepalives for 60 seconds after activity, or did not respond within 180 seconds. The turn may be incomplete. Check the server and refresh this chat before resending to avoid duplicate work.")
             self.pauseQueuedMessages(reason: "The preceding response stalled. Check chat history before sending this follow-up.", sessionID: session.id)
         }
@@ -1700,6 +1703,7 @@ final class AppStore: ObservableObject {
                 // this one). Not an error — don't surface "Message failed".
             } catch let e as APIError {
                 if !Task.isCancelled, self.chatTurnID == turnID, self.apiClient === client {
+                    self.lastChatFailureSupportsEndpointProbe = VoiceEndpointRecoveryPolicy.shouldProbe(after: e)
                     self.error = AppError(message: e.errorDescription ?? "Message failed")
                 }
             } catch {
@@ -1758,6 +1762,69 @@ final class AppStore: ObservableObject {
         return assistantMessage
     }
 
+    /// Check whether the exact endpoint/client captured by voice mode is
+    /// reachable again. This never changes endpoints, recreates the client, or
+    /// replays the failed command: an interrupted POST may already have run.
+    func probeVoiceEndpoint(
+        endpoint: VoiceEndpointBinding,
+        client: HermesAPIClient,
+        attempts: Int = VoiceEndpointRecoveryPolicy.maximumAttempts
+    ) async -> Bool {
+        let count = max(1, min(attempts, VoiceEndpointRecoveryPolicy.maximumAttempts))
+        for attempt in 0..<count {
+            guard VoiceTurnRoutingPolicy.authorizes(
+                endpoint: endpoint,
+                capturedClient: client,
+                currentConfig: connectionConfig,
+                currentClient: apiClient
+            ) else {
+                FileLogger.shared.log("AppStore: stopped voice endpoint probe because ownership changed")
+                return false
+            }
+
+            let delay = VoiceEndpointRecoveryPolicy.delayNanoseconds(beforeAttempt: attempt)
+            if delay > 0 {
+                do { try await Task.sleep(nanoseconds: delay) }
+                catch { return false }
+            }
+
+            do {
+                let health = try await client.checkHealth()
+                guard VoiceTurnRoutingPolicy.authorizes(
+                    endpoint: endpoint,
+                    capturedClient: client,
+                    currentConfig: connectionConfig,
+                    currentClient: apiClient
+                ), !Task.isCancelled else { return false }
+                if health.status == "ok", health.isHermesAPI {
+                    let healthKey = connectionConfig?.baseURL ?? endpoint.baseURL
+                    serverHealthStatus[healthKey] = ServerHealthState(
+                        id: healthKey,
+                        label: endpoint.displayName,
+                        baseURL: healthKey,
+                        status: .online
+                    )
+                    lastServerResponseAt = Date()
+                    FileLogger.shared.log("AppStore: bound voice endpoint is reachable after probe \(attempt + 1)")
+                    return true
+                }
+            } catch {
+                guard !Task.isCancelled else { return false }
+                FileLogger.shared.log("AppStore: bound voice endpoint probe \(attempt + 1) failed: \(error.localizedDescription)")
+            }
+        }
+
+        guard endpoint.matches(connectionConfig) else { return false }
+        let healthKey = connectionConfig?.baseURL ?? endpoint.baseURL
+        serverHealthStatus[healthKey] = ServerHealthState(
+            id: healthKey,
+            label: endpoint.displayName,
+            baseURL: healthKey,
+            status: .offline
+        )
+        return false
+    }
+
     // MARK: - sendMessage Helpers
 
     private func ensureSession(client: HermesAPIClient) async -> HermesSession? {
@@ -1776,6 +1843,11 @@ final class AppStore: ObservableObject {
                 activeSessionPersistence.save(sessionID: newSession.id, for: config.endpointID)
             }
             return newSession
+        } catch let error as APIError {
+            guard apiClient === client, sessionSelectionID == selectionID, chatTurnID == turnID else { return nil }
+            lastChatFailureSupportsEndpointProbe = VoiceEndpointRecoveryPolicy.shouldProbe(after: error)
+            self.error = AppError(message: "Failed to create session: \(error.localizedDescription)")
+            return nil
         } catch {
             guard apiClient === client, sessionSelectionID == selectionID, chatTurnID == turnID else { return nil }
             self.error = AppError(message: "Failed to create session: \(error.localizedDescription)")

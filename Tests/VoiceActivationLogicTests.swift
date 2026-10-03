@@ -37,6 +37,10 @@ final class VoiceActivationLogicTests: XCTestCase {
             isConversing: true, isListening: false, isSpeaking: false,
             isThinking: false, isMuted: true
         ))
+        XCTAssertFalse(VoiceConversationLifecyclePolicy.shouldRecoverListening(
+            isConversing: true, isListening: false, isSpeaking: false,
+            isThinking: false, isReconnecting: true
+        ))
     }
 
     @MainActor
@@ -76,6 +80,61 @@ final class VoiceActivationLogicTests: XCTestCase {
             ).phase,
             .ended
         )
+        XCTAssertEqual(
+            HermesVoiceActivityStateResolver.resolve(
+                isConversing: true, isListening: false, isSpeaking: false,
+                isThinking: false, isReconnecting: true, isMuted: true,
+                hasError: true, hasActiveTool: false, toolCount: 0
+            ).phase,
+            .reconnecting,
+            "A bounded endpoint probe must be visible even when the failed turn left an error"
+        )
+    }
+
+    func testVoiceEndpointRecoveryPolicyOnlyProbesAvailabilityFailures() {
+        XCTAssertEqual(VoiceEndpointRecoveryPolicy.maximumAttempts, 3)
+        XCTAssertEqual(VoiceEndpointRecoveryPolicy.delayNanoseconds(beforeAttempt: 0), 0)
+        XCTAssertGreaterThan(VoiceEndpointRecoveryPolicy.delayNanoseconds(beforeAttempt: 1), 0)
+        XCTAssertTrue(VoiceEndpointRecoveryPolicy.shouldProbe(after: .connectionRefused))
+        XCTAssertTrue(VoiceEndpointRecoveryPolicy.shouldProbe(after: .serverError(status: 503)))
+        XCTAssertFalse(VoiceEndpointRecoveryPolicy.shouldProbe(after: .serverError(status: 500)))
+        XCTAssertFalse(VoiceEndpointRecoveryPolicy.shouldProbe(after: .unauthorized))
+        XCTAssertFalse(VoiceEndpointRecoveryPolicy.shouldProbe(after: .invalidEndpoint("wrong protocol")))
+    }
+
+    @MainActor
+    func testEndpointRecoveryUsesAnExactTurnAndCanBeCancelledWithoutReplay() {
+        let manager = VoiceConversationManager()
+        manager.isConversing = true
+        let activeTurn = manager.beginRemoteTurn()
+
+        XCTAssertNil(manager.beginEndpointRecovery(for: UUID()))
+        XCTAssertTrue(manager.isThinking)
+        XCTAssertNotNil(manager.beginEndpointRecovery(for: activeTurn))
+        XCTAssertFalse(manager.isThinking)
+        XCTAssertTrue(manager.isReconnecting)
+
+        manager.cancelThinking()
+        XCTAssertFalse(manager.isReconnecting)
+        manager.stopConversation()
+    }
+
+    @MainActor
+    func testEndpointProbeRejectsMismatchedTargetBeforeNetworking() async {
+        let linux = ConnectionConfig(baseURL: "https://linux.invalid", apiKey: "linux", label: "Linux")
+        let mac = ConnectionConfig(baseURL: "https://mac.invalid", apiKey: "mac", label: "Mac")
+        let macClient = HermesAPIClient(config: mac)
+        let store = AppStore(client: macClient)
+        store.connectionConfig = mac
+
+        let reachable = await store.probeVoiceEndpoint(
+            endpoint: VoiceEndpointBinding(config: linux),
+            client: macClient,
+            attempts: 1
+        )
+
+        XCTAssertFalse(reachable)
+        XCTAssertTrue(store.serverHealthStatus.isEmpty)
     }
 
     func testVoiceActivityIdentityIsBoundedAndDeepLinkRoundTrips() {

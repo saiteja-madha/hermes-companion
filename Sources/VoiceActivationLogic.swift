@@ -23,9 +23,10 @@ enum VoiceConversationLifecyclePolicy {
         isListening: Bool,
         isSpeaking: Bool,
         isThinking: Bool,
+        isReconnecting: Bool = false,
         isMuted: Bool = false
     ) -> Bool {
-        isConversing && !isListening && !isSpeaking && !isThinking && !isMuted
+        isConversing && !isListening && !isSpeaking && !isThinking && !isReconnecting && !isMuted
     }
 }
 
@@ -69,6 +70,36 @@ enum VoiceTurnRoutingPolicy {
         if endpoint == nil, capturedClient == nil { return true }
         guard let endpoint, let capturedClient, let currentClient else { return false }
         return endpoint.matches(currentConfig) && capturedClient === currentClient
+    }
+}
+
+enum VoiceEndpointRecoveryPolicy {
+    /// Three short health probes are bounded to roughly 17 seconds including
+    /// backoff because `checkHealth()` has its own five-second timeout.
+    static let maximumAttempts = 3
+
+    static func delayNanoseconds(beforeAttempt attempt: Int) -> UInt64 {
+        switch attempt {
+        case ...0: return 0
+        case 1: return 500_000_000
+        default: return 1_000_000_000
+        }
+    }
+
+    /// Probe only failures that can plausibly be caused by endpoint or network
+    /// availability. Authentication, validation and model errors must remain
+    /// ordinary failures rather than being disguised as reconnect attempts.
+    static func shouldProbe(after error: APIError) -> Bool {
+        switch error {
+        case .transport, .connectionRefused:
+            return true
+        case .http(let failure):
+            return [502, 503, 504].contains(failure.status)
+        case .serverError(let status):
+            return [502, 503, 504].contains(status)
+        default:
+            return false
+        }
     }
 }
 

@@ -7,6 +7,11 @@ voice verified. Use two distinguishable test gateways named **Linux** and
 
 ## Build gate on macOS
 
+Run `scripts/verify-jarvis-ios.sh`. Override its simulator when necessary with,
+for example, `JARVIS_DESTINATION='platform=iOS Simulator,OS=latest,name=iPhone 17'`.
+The script preserves `JARVIS-Verification.xcresult` for inspection and refuses
+to overwrite an existing result bundle.
+
 - [ ] Regenerate the Xcode project from `project.yml` and confirm the diff is
   expected.
 - [ ] Build the app and widget targets with the intended signing team.
@@ -88,6 +93,13 @@ voice verified. Use two distinguishable test gateways named **Linux** and
   app termination and endpoint switching.
 - [ ] Disable Wi-Fi/Tailscale during a turn, restore it, and confirm retries stay
   pinned to the original endpoint.
+- [ ] Confirm an availability failure shows `RECONNECTING` in-app and in the
+  Live Activity, performs no more than three health probes, and never resends
+  the failed transcript automatically.
+- [ ] Keep Linux offline through all probes, tap `RETRY LINUX`, and confirm every
+  request still targets Linux while Mac receives zero traffic.
+- [ ] Cause a 401/validation failure and confirm it does not masquerade as an
+  endpoint reconnect or trigger health-probe traffic.
 - [ ] Leave one endpoint offline while conversing with the other; health checks
   for the offline endpoint must not disrupt the active voice session.
 - [ ] Rotate one endpoint credential and confirm the other endpoint’s Keychain
