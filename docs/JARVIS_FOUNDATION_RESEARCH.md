@@ -337,7 +337,7 @@ the React Native layer. There is no net reduction in work for this project.
 
 ## Development checklist
 
-- [x] Configure `saiteja-madha/hermes-companion-hud` as the fork remote; retain `chibitek/HermesCompanion` as `upstream`.
+- [x] Configure `saiteja-madha/HermesCompanion` as the fork remote; retain `chibitek/HermesCompanion` as `upstream` (the former standalone copy is retained as `backup`).
 - [ ] Add the real Linux endpoint URL, display name, credentials and capabilities on device.
 - [ ] Add the real Mac endpoint URL, display name, credentials and capabilities on device.
 - [ ] Store each API key in Keychain and keep widget/App Intent metadata secret-free.
