@@ -2,7 +2,7 @@
 // Native iOS client for Hermes Agent
 // https://github.com/NousResearch/hermes-agent
 //
-// MIT License — see LICENSE
+// Personal, non-commercial license — see LICENSE
 //
 // This app is provider-agnostic. It connects to any running Hermes Agent
 // gateway API server via a user-configured URL and API key.

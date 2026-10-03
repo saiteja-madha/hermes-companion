@@ -8,7 +8,7 @@
 
 [![iOS](https://img.shields.io/badge/iOS-26.0+-blue?style=for-the-badge&logo=apple&logoColor=white)](https://www.apple.com/ios/)
 [![Built by Chibitek Labs](https://img.shields.io/badge/Built%20by-Chibitek%20Labs-00B398?style=for-the-badge)](https://chibitek.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
+[![License: Personal Use](https://img.shields.io/badge/License-Personal%20Use-green?style=for-the-badge)](LICENSE)
 [![Hermes Agent](https://img.shields.io/badge/Powered%20by-Hermes%20Agent-FFD700?style=for-the-badge)](https://github.com/NousResearch/hermes-agent)
 
 **Chat. Voice. Camera. Controls. Tools. Approvals. Sessions. Themes.**
