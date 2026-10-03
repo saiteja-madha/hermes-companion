@@ -22,6 +22,7 @@ struct ChatView: View {
     @State private var showCameraPicker = false
     @StateObject private var voiceConversation = VoiceConversationManager()
     @State private var showVoicePage = false
+    @State private var voiceEndpoint: VoiceEndpointBinding?
     @StateObject private var wakePhraseListener = WakePhraseListener()
     @AppStorage("hey_hermes_enabled", store: SharedDefaults.shared) private var heyHermesEnabled = false
 
@@ -37,6 +38,10 @@ struct ChatView: View {
                 HStack(spacing: 6) {
                     Circle().fill(ready ? Color.green : Color.orange).frame(width: 7, height: 7)
                     Text(store.isStreaming ? store.responseActivity : status)
+                    if let config = store.connectionConfig {
+                        Text("• \(VoiceEndpointBinding(config: config).displayName)")
+                            .fontWeight(.semibold)
+                    }
                     Spacer()
                     if let age {
                         Text("Health \(max(0, Int(age)))s ago")
@@ -173,16 +178,20 @@ struct ChatView: View {
                 Text(store.error?.message ?? "")
             }
             .fullScreenCover(isPresented: $showVoicePage) {
-                VoiceConversationPage(
-                    voiceConversation: voiceConversation,
-                    store: store,
-                    onVoiceTranscription: { transcription in
-                        handleVoiceTranscription(transcription)
-                    },
-                    onClose: {
-                        showVoicePage = false
-                    }
-                )
+                if let endpoint = voiceEndpoint {
+                    VoiceConversationPage(
+                        voiceConversation: voiceConversation,
+                        endpoint: endpoint,
+                        store: store,
+                        onVoiceTranscription: { transcription in
+                            handleVoiceTranscription(transcription, endpoint: endpoint)
+                        },
+                        onClose: {
+                            showVoicePage = false
+                            voiceEndpoint = nil
+                        }
+                    )
+                }
             }
         }
         .onAppear {
@@ -543,8 +552,13 @@ struct ChatView: View {
     }
 
     private func openVoiceConversation() {
+        guard store.isConnected, let config = store.connectionConfig else {
+            store.error = AppError(message: "Connect to a Hermes server before starting voice mode.")
+            return
+        }
         wakePhraseListener.pause()
         wakePhraseListener.allowAfterExplicitVoiceRequest()
+        voiceEndpoint = VoiceEndpointBinding(config: config)
         showVoicePage = true
     }
 
@@ -581,8 +595,16 @@ struct ChatView: View {
     }
 
     @MainActor
-    private func handleVoiceTranscription(_ transcription: String) {
+    private func handleVoiceTranscription(_ transcription: String, endpoint: VoiceEndpointBinding) {
         FileLogger.shared.log("ChatView: handleVoiceTranscription called: \(transcription)")
+        guard endpoint.matches(store.connectionConfig), store.isConnected else {
+            FileLogger.shared.log("ChatView: blocked voice turn because endpoint binding no longer matches")
+            voiceConversation.stopConversation()
+            showVoicePage = false
+            voiceEndpoint = nil
+            store.error = AppError(message: "Voice mode stopped because the active Hermes server changed. Reopen voice mode after confirming the server.")
+            return
+        }
         let priorErrorID = store.error?.id
         let voiceTurn = voiceConversation.beginRemoteTurn()
 

@@ -3,6 +3,23 @@ import AVFoundation
 @testable import HermesCompanion
 
 final class VoiceActivationLogicTests: XCTestCase {
+    func testVoiceEndpointBindingMatchesOnlyCapturedServer() {
+        let linux = ConnectionConfig(baseURL: "https://linux-hermes.example/", apiKey: "linux-key", label: "Linux")
+        let mac = ConnectionConfig(baseURL: "https://mac-hermes.example", apiKey: "mac-key", label: "Mac")
+        let binding = VoiceEndpointBinding(config: linux)
+
+        XCTAssertTrue(binding.matches(linux), "A trailing slash must not change endpoint identity")
+        XCTAssertFalse(binding.matches(mac), "A voice turn must never follow the globally selected server")
+        XCTAssertFalse(binding.matches(nil))
+        XCTAssertEqual(binding.displayName, "Linux")
+    }
+
+    func testVoiceEndpointBindingFallsBackToHostWhenLabelIsBlank() {
+        let config = ConnectionConfig(baseURL: "https://hermes.example:8642/", apiKey: "key", label: "  ")
+
+        XCTAssertEqual(VoiceEndpointBinding(config: config).displayName, "hermes.example")
+    }
+
     @MainActor
     func testIdleVoiceControllersIgnoreSystemAudioInterruptionsAndCleanup() throws {
         let audio = AVAudioSession.sharedInstance()

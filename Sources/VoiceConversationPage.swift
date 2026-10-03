@@ -49,6 +49,7 @@ struct CyberpunkVoicePreset: Identifiable, CaseIterable, Equatable {
 
 struct VoiceConversationPage: View {
     @ObservedObject var voiceConversation: VoiceConversationManager
+    let endpoint: VoiceEndpointBinding
     var store: AppStore? = nil
     var onVoiceTranscription: ((String) -> Void)? = nil
     var onClose: (() -> Void)? = nil
@@ -120,6 +121,12 @@ struct VoiceConversationPage: View {
             rainEaseTimer = nil
             voiceConversation.stopConversation()
         }
+        .onChange(of: store?.connectionConfig?.normalizedBaseURL) { _, _ in
+            guard !endpoint.matches(store?.connectionConfig) else { return }
+            FileLogger.shared.log("VoicePage: endpoint changed while voice mode was active; ending bound session")
+            voiceConversation.stopConversation()
+            onClose?()
+        }
     }
 
     // MARK: - Top Bar
@@ -127,11 +134,19 @@ struct VoiceConversationPage: View {
     private var topBar: some View {
         HStack {
             // Top bar: ◉ VOICE_MODE (green, mono, subtle glitch animation) + ✕ close
-            Text("◉ VOICE_MODE")
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                .foregroundStyle(preset.primary)
-                .shadow(color: preset.primary.opacity(0.6), radius: 4)
-                .modifier(GlitchAnimation())
+            VStack(alignment: .leading, spacing: 3) {
+                Text("◉ VOICE_MODE")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(preset.primary)
+                    .shadow(color: preset.primary.opacity(0.6), radius: 4)
+                    .modifier(GlitchAnimation())
+                Text("TARGET: \(endpoint.displayName.uppercased())")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(preset.secondary)
+                    .lineLimit(1)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Voice mode target, \(endpoint.displayName)")
             
             Spacer()
             
