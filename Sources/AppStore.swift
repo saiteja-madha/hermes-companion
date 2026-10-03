@@ -1535,7 +1535,27 @@ final class AppStore: ObservableObject {
     }
 
     @discardableResult
-    func sendMessage(_ text: String, displayText: String? = nil, images: [Data] = [], attachments: [AttachmentData] = [], skipPostReload: Bool = false, queuedMessageID: UUID? = nil) async -> ChatDisplayMessage? {
+    func sendMessage(
+        _ text: String,
+        displayText: String? = nil,
+        images: [Data] = [],
+        attachments: [AttachmentData] = [],
+        skipPostReload: Bool = false,
+        queuedMessageID: UUID? = nil,
+        requiredVoiceEndpoint: VoiceEndpointBinding? = nil,
+        requiredVoiceClient: HermesAPIClient? = nil
+    ) async -> ChatDisplayMessage? {
+        guard VoiceTurnRoutingPolicy.authorizes(
+            endpoint: requiredVoiceEndpoint,
+            capturedClient: requiredVoiceClient,
+            currentConfig: connectionConfig,
+            currentClient: apiClient
+        ) else {
+            self.error = AppError(message: "Voice command was not sent because the selected Hermes server changed. Reopen voice mode after confirming the target.")
+            FileLogger.shared.log("AppStore: rejected voice send because endpoint/client ownership changed")
+            return nil
+        }
+
         let client: HermesAPIClient
         do {
             client = try self.client()
@@ -1557,7 +1577,13 @@ final class AppStore: ObservableObject {
         lastChatActivityAt = nil
         isStreaming = true
         let session = await ensureSession(client: client)
-        guard let session, apiClient === client, chatTurnID == turnID else {
+        guard let session, apiClient === client, chatTurnID == turnID,
+              VoiceTurnRoutingPolicy.authorizes(
+                endpoint: requiredVoiceEndpoint,
+                capturedClient: requiredVoiceClient,
+                currentConfig: connectionConfig,
+                currentClient: apiClient
+              ) else {
             if chatTurnID == turnID {
                 isStreaming = false
                 pauseQueuedMessages(reason: "Hermes could not open the conversation. Review this saved follow-up before sending.", pendingTurnID: turnID)

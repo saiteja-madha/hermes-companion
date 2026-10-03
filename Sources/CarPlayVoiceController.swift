@@ -16,6 +16,8 @@ final class CarPlayVoiceController: ObservableObject {
     private weak var store: AppStore?
     private var cancellables = Set<AnyCancellable>()
     private var turnID = UUID()
+    private var endpoint: VoiceEndpointBinding?
+    private var voiceClient: HermesAPIClient?
 
     private init() {
         // Keep CarPlay UI in sync with the voice manager's state.
@@ -62,10 +64,14 @@ final class CarPlayVoiceController: ObservableObject {
 
     func start() {
         guard !isActive else { return }
-        guard let store, store.isConnected else {
+        guard let store, store.isConnected,
+              let config = store.connectionConfig,
+              let client = store.apiClient else {
             stateText = "Not connected to Hermes"
             return
         }
+        endpoint = VoiceEndpointBinding(config: config)
+        voiceClient = client
         isActive = true
         turnID = UUID()
         voice.startConversation { [weak self] transcription in
@@ -76,12 +82,14 @@ final class CarPlayVoiceController: ObservableObject {
     func stop() {
         turnID = UUID()
         isActive = false
+        endpoint = nil
+        voiceClient = nil
         voice.stopConversation()
         stateText = "Tap to talk"
     }
 
     private func handleTranscription(_ transcription: String) {
-        guard isActive, let store else { return }
+        guard isActive, let store, let endpoint, let voiceClient else { return }
         let currentTurn = UUID()
         turnID = currentTurn
         let priorErrorID = store.error?.id
@@ -89,7 +97,12 @@ final class CarPlayVoiceController: ObservableObject {
             guard let self, self.isActive, self.turnID == currentTurn else { return }
             let voiceTurn = self.voice.beginRemoteTurn()
 
-            let responseMessage = await store.sendMessage(transcription, skipPostReload: true)
+            let responseMessage = await store.sendMessage(
+                transcription,
+                skipPostReload: true,
+                requiredVoiceEndpoint: endpoint,
+                requiredVoiceClient: voiceClient
+            )
 
             guard self.isActive, self.turnID == currentTurn,
                   self.voice.isCurrentRemoteTurn(voiceTurn) else { return }

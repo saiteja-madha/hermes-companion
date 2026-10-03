@@ -169,6 +169,89 @@ final class VoiceActivationLogicTests: XCTestCase {
         XCTAssertFalse(VoiceEndpointBinding(config: first).matches(replacement))
     }
 
+    func testVoiceTurnRoutingRequiresEndpointAndExactCapturedClient() {
+        let linuxID = UUID()
+        let linux = ConnectionConfig(
+            endpointID: linuxID,
+            baseURL: "https://linux.example",
+            apiKey: "linux",
+            label: "Linux"
+        )
+        let sameLinux = ConnectionConfig(
+            endpointID: linuxID,
+            baseURL: "https://linux.example/",
+            apiKey: "rotated",
+            label: "Linux renamed"
+        )
+        let mac = ConnectionConfig(
+            baseURL: "https://mac.example",
+            apiKey: "mac",
+            label: "Mac"
+        )
+        let binding = VoiceEndpointBinding(config: linux)
+        let capturedClient = NSObject()
+        let replacementClient = NSObject()
+
+        XCTAssertTrue(VoiceTurnRoutingPolicy.authorizes(
+            endpoint: binding,
+            capturedClient: capturedClient,
+            currentConfig: sameLinux,
+            currentClient: capturedClient
+        ))
+        XCTAssertFalse(VoiceTurnRoutingPolicy.authorizes(
+            endpoint: binding,
+            capturedClient: capturedClient,
+            currentConfig: sameLinux,
+            currentClient: replacementClient
+        ), "Reconnecting to the same URL still creates a new client ownership boundary")
+        XCTAssertFalse(VoiceTurnRoutingPolicy.authorizes(
+            endpoint: binding,
+            capturedClient: capturedClient,
+            currentConfig: mac,
+            currentClient: capturedClient
+        ))
+        XCTAssertFalse(VoiceTurnRoutingPolicy.authorizes(
+            endpoint: binding,
+            capturedClient: nil,
+            currentConfig: linux,
+            currentClient: capturedClient
+        ))
+        XCTAssertTrue(VoiceTurnRoutingPolicy.authorizes(
+            endpoint: nil,
+            capturedClient: nil,
+            currentConfig: mac,
+            currentClient: replacementClient
+        ), "Ordinary typed chat remains unrestricted by the voice-only contract")
+    }
+
+    @MainActor
+    func testAppStoreRejectsVoiceTurnBeforeNetworkingWhenOwnershipChanged() async {
+        let linux = ConnectionConfig(
+            baseURL: "https://linux.invalid",
+            apiKey: "linux",
+            label: "Linux"
+        )
+        let mac = ConnectionConfig(
+            baseURL: "https://mac.invalid",
+            apiKey: "mac",
+            label: "Mac"
+        )
+        let macClient = HermesAPIClient(config: mac)
+        let store = AppStore(client: macClient)
+        store.connectionConfig = mac
+
+        let response = await store.sendMessage(
+            "must never leave the phone",
+            requiredVoiceEndpoint: VoiceEndpointBinding(config: linux),
+            requiredVoiceClient: macClient
+        )
+
+        XCTAssertNil(response)
+        XCTAssertTrue(store.error?.message.contains("not sent") == true)
+        XCTAssertFalse(store.isStreaming)
+        XCTAssertTrue(store.messages.isEmpty)
+    }
+
     func testExplicitVoiceLaunchNeverFallsBackToCurrentOrPreferredEndpoint() {
         let linux = ConnectionConfig(baseURL: "https://linux.example", apiKey: "linux", label: "Linux")
         let mac = ConnectionConfig(baseURL: "https://mac.example", apiKey: "mac", label: "Mac")

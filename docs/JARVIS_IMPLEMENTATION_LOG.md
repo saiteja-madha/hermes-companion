@@ -269,3 +269,48 @@ intended configuration, not device-level proof:
 2. Execute the endpoint, Siri, background audio and Dynamic Island device matrix.
 3. Add bounded reconnect state only if device/network tests expose a gap; never
    auto-fail over to the other Hermes endpoint.
+
+## 2026-10-03 — Phase 5 implemented in source: atomic voice-turn routing
+
+### Gap found
+
+`ChatView` previously verified the endpoint before creating an asynchronous
+`Task`, but `AppStore.sendMessage()` selected its API client only after that task
+began. A server switch scheduled in that interval could make the send use a new
+client even though the UI-level check had passed.
+
+### Changes
+
+- Added `VoiceTurnRoutingPolicy`, which requires both the immutable endpoint
+  binding and the exact `HermesAPIClient` object captured by voice mode to still
+  own `AppStore`.
+- Extended `AppStore.sendMessage()` with an optional voice-only routing contract.
+  Ordinary typed chat remains unchanged. A required voice send fails before
+  session creation or networking if either endpoint identity or client ownership
+  differs, and it checks the contract again after asynchronous session setup.
+- `ChatView` now captures the active client alongside the endpoint before
+  beginning a remote voice turn and supplies both to `sendMessage()`.
+- CarPlay captures the same endpoint/client pair when its conversation starts and
+  routes every subsequent turn through the same fail-closed contract.
+- A switch after a request already began can cancel that request, but it cannot
+  redirect it: the request retains the originally captured client and all later
+  state writes already require that client to remain current.
+
+### Tests added
+
+- Same endpoint plus the same client is authorized.
+- Same endpoint plus a replacement client is rejected, including a reconnect to
+  the same URL.
+- Different endpoint plus the original client is rejected.
+- Supplying only half of the voice routing requirement is rejected.
+- An `AppStore` integration test uses invalid Linux/Mac URLs and proves a
+  mismatched voice turn returns before streaming, message insertion or any
+  network path can begin.
+
+### Verification state
+
+- Static checks and focused policy/integration test source are complete.
+- Test execution still requires Xcode on macOS; the Linux runner has no Swift or
+  iOS SDK.
+- The physical two-stub-server alternating-endpoint test remains the final proof
+  that no command reaches the nonselected machine.

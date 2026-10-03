@@ -69,7 +69,7 @@ Status legend:
 | Multiple Hermes endpoints | **Implemented, untested in fork** — stable endpoint UUIDs, picker, health checks, independent voice default, `switchToConnection` | **Verified** — `AuthManager.servers`, active-server routing, per-server view identity | **Missing** — one active relay/pairing configuration | **Partial/unknown** — profile support exists, but one active relay/host topology dominates | Older multi-server implementation; less complete |
 | Separate endpoint credentials | **Verified** — configs including API keys are stored in Keychain | **Verified** — `Auth/KeychainStore.swift`, server account registry, isolated cookie jars | **Partial** — paired relay token in Keychain, but no two-Hermes endpoint registry | **Partial** — relay session/profile credentials, not two direct Hermes endpoints | Same older design |
 | Separate session state per endpoint | **Implemented, untested in fork** — active session pointers use stable endpoint UUIDs with one-time URL-key migration; server sessions remain remote | **Verified** — caches and views are keyed by server URL; source comments explicitly tear down views on switch | **Missing/unknown** | **Missing/unknown** | Partial at old head |
-| Safe endpoint switching | **Implemented, untested in fork** — immutable voice endpoint binding, mismatch rejection, and exact-request/no-fallback Siri routing | **Verified** for chat/server routing; no continuous voice session to protect | **Missing** | **Missing** for two independent Hermes endpoints | Partial at old head |
+| Safe endpoint switching | **Implemented, untested in fork** — immutable endpoint plus exact-client send contract, mismatch rejection, and exact-request/no-fallback Siri routing | **Verified** for chat/server routing; no continuous voice session to protect | **Missing** | **Missing** for two independent Hermes endpoints | Partial at old head |
 | Continuous two-way voice | **Verified in source; device retest required** — on-device STT, Hermes turn, AVSpeechSynthesizer, auto-resume | **Missing** — `ComposerVoiceInputController` is dictation into a draft; no response TTS loop | **Partial** — substantial Realtime voice mode, but it uses relay/OpenAI Realtime rather than the existing Hermes voice/session path | **Untested** — `HermesTalkCoordinator` has VAD, Hermes turn streaming, TTS, auto-turn-taking, and barge-in | Missing at old head |
 | VAD / endpointing | **Partial** — speech partials plus a 1.5-second silence timer, not a dedicated VAD model | **Partial** — dictation endpointing only | **Implemented, untested** in Realtime voice stack | **Implemented, untested** — `TalkAudioCapture.startListeningWithVAD()` | Partial dictation only |
 | Interruptible responses | **Partial** — stop/tap and level-based barge-in machinery exist; physical-device reliability remains to verify | **Missing** | **Implemented, untested** | **Implemented, untested** | Missing |
@@ -172,6 +172,11 @@ UUID, normalized URL, API client identity, and the active session ID/generation.
 An endpoint switch during voice mode ends voice mode. There is no automatic
 Linux-to-Mac failover, because availability is not authorization to run a command
 on the other machine.
+
+The fork now enforces that architecture at the final send boundary rather than
+only in the UI: `AppStore.sendMessage()` accepts the captured endpoint binding
+and exact client for voice turns and returns before networking if either no
+longer owns the store.
 
 ## Exact implementation plan
 

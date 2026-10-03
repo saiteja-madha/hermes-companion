@@ -664,7 +664,8 @@ struct ChatView: View {
     @MainActor
     private func handleVoiceTranscription(_ transcription: String, endpoint: VoiceEndpointBinding) {
         FileLogger.shared.log("ChatView: handleVoiceTranscription called: \(transcription)")
-        guard endpoint.matches(store.connectionConfig), store.isConnected else {
+        guard endpoint.matches(store.connectionConfig), store.isConnected,
+              let voiceClient = store.apiClient else {
             FileLogger.shared.log("ChatView: blocked voice turn because endpoint binding no longer matches")
             voiceConversation.stopConversation()
             showVoicePage = false
@@ -680,7 +681,12 @@ struct ChatView: View {
             // AppStore owns activity-aware request timeouts. Speak its complete
             // answer rather than an untracked prefix from the text stream.
             let voiceMessage = "[voice] \(transcription)"
-            let responseMessage = await store.sendMessage(voiceMessage, skipPostReload: true)
+            let responseMessage = await store.sendMessage(
+                voiceMessage,
+                skipPostReload: true,
+                requiredVoiceEndpoint: endpoint,
+                requiredVoiceClient: voiceClient
+            )
             guard voiceConversation.isCurrentRemoteTurn(voiceTurn) else { return }
             FileLogger.shared.log("ChatView: store.sendMessage returned \(String(describing: responseMessage?.content.prefix(80)))")
 

@@ -55,6 +55,23 @@ struct VoiceEndpointBinding: Equatable, Sendable {
     }
 }
 
+enum VoiceTurnRoutingPolicy {
+    /// A voice turn is authorized only when both the immutable endpoint binding
+    /// and the exact API client captured at conversation start still own the
+    /// store. Checking only the endpoint leaves a scheduling race before an
+    /// async send begins; checking only the client loses human-readable identity.
+    static func authorizes(
+        endpoint: VoiceEndpointBinding?,
+        capturedClient: AnyObject?,
+        currentConfig: ConnectionConfig?,
+        currentClient: AnyObject?
+    ) -> Bool {
+        if endpoint == nil, capturedClient == nil { return true }
+        guard let endpoint, let capturedClient, let currentClient else { return false }
+        return endpoint.matches(currentConfig) && capturedClient === currentClient
+    }
+}
+
 enum VoiceLaunchEndpointResolver {
     /// Resolve an intent without availability-based fallback. An explicit but
     /// missing endpoint returns nil instead of silently selecting another server.
