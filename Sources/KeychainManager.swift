@@ -5,7 +5,7 @@ import Security
 ///
 /// Single-connection (legacy): `active_config` key holds the active ConnectionConfig.
 /// Multi-connection: `all_configs` key holds [ConnectionConfig]; the active one
-/// is identified by its `baseURL` match against `active_config`. The single
+/// is identified by its stable `endpointID` match against `active_config`. The single
 /// key is kept in sync so existing code paths that call `loadActive()` /
 /// `deleteActive()` still work.
 final class KeychainManager: Sendable {
@@ -23,7 +23,10 @@ final class KeychainManager: Sendable {
 
     func loadActive() -> ConnectionConfig? {
         guard let data = load(key: "active_config") else { return nil }
-        return try? JSONDecoder().decode(ConnectionConfig.self, from: data)
+        guard let config = try? JSONDecoder().decode(ConnectionConfig.self, from: data) else { return nil }
+        // Persist the generated endpoint ID when decoding a pre-ID record.
+        if !Self.containsEndpointID(data) { try? save(config) }
+        return config
     }
 
     func deleteActive() {
@@ -36,6 +39,9 @@ final class KeychainManager: Sendable {
     func loadAll() -> [ConnectionConfig] {
         guard let data = load(key: "all_configs") else { return [] }
         if let arr = try? JSONDecoder().decode([ConnectionConfig].self, from: data) {
+            // One-time, in-place migration of legacy records. API keys never
+            // leave the Keychain; only the encoded record gains endpointID.
+            if !Self.allRecordsContainEndpointID(data) { try? saveAll(arr) }
             return arr
         }
         return []
@@ -47,38 +53,54 @@ final class KeychainManager: Sendable {
         try save(key: "all_configs", data: data)
     }
 
-    /// Insert or update a config (matched by `baseURL`). New entries go to the top.
+    /// Insert or update a config (stable ID first, normalized URL for legacy callers).
     /// Returns the updated list.
     @discardableResult
     func addOrUpdate(_ config: ConnectionConfig) throws -> [ConnectionConfig] {
         var all = loadAll()
-        if let idx = all.firstIndex(where: { $0.baseURL == config.baseURL }) {
-            all[idx] = config
+        var stored = config
+        if let idx = all.firstIndex(where: {
+            $0.endpointID == config.endpointID || $0.normalizedBaseURL == config.normalizedBaseURL
+        }) {
+            // A legacy edit form may construct a fresh UUID for the same URL.
+            // Preserve the already persisted identity in that case.
+            stored.endpointID = all[idx].endpointID
+            all[idx] = stored
         } else {
-            all.insert(config, at: 0)
+            all.insert(stored, at: 0)
         }
         try saveAll(all)
         return all
     }
 
-    /// Remove a config by baseURL. Also clears the active pointer if it pointed here.
+    /// Remove a config by stable endpoint ID. Also clears the active pointer if needed.
     @discardableResult
-    func remove(baseURL: String) throws -> [ConnectionConfig] {
+    func remove(endpointID: UUID) throws -> [ConnectionConfig] {
         var all = loadAll()
-        all.removeAll { $0.baseURL == baseURL }
+        all.removeAll { $0.endpointID == endpointID }
         try saveAll(all)
-        if let active = loadActive(), active.baseURL == baseURL {
+        if let active = loadActive(), active.endpointID == endpointID {
             deleteActive()
         }
         return all
     }
 
-    /// Mark a config as active by baseURL. Persists it to `active_config` so
+    /// Mark a config as active by stable endpoint ID. Persists it to `active_config` so
     /// legacy `loadActive()` callers (AppStore init) see the right one.
-    func setActive(baseURL: String) throws {
+    func setActive(endpointID: UUID) throws {
         let all = loadAll()
-        guard let config = all.first(where: { $0.baseURL == baseURL }) else { return }
+        guard let config = all.first(where: { $0.endpointID == endpointID }) else { return }
         try save(config)
+    }
+
+    private static func containsEndpointID(_ data: Data) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return object["endpointID"] is String
+    }
+
+    private static func allRecordsContainEndpointID(_ data: Data) -> Bool {
+        guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
+        return objects.allSatisfy { $0["endpointID"] is String }
     }
 
     // MARK: - Private Keychain Operations

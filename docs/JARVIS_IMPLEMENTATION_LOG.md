@@ -65,7 +65,7 @@ endpoint.
 - Physical-device behavior: not yet tested.
 - Linux/Mac live integration: not yet configured in this environment.
 
-## Next work
+## Plan recorded after phase 1
 
 1. Introduce stable endpoint UUIDs and a default endpoint without breaking the
    existing Keychain records.
@@ -74,3 +74,57 @@ endpoint.
    Shortcut phrases for default/Linux/Mac.
 4. Refactor the audio background transition; verify it on a physical device.
 5. Add the ActivityKit target only after endpoint and session identity are stable.
+
+## 2026-10-03 — Phase 2 implemented: stable endpoints and Siri routing
+
+### Changes
+
+- Added `ConnectionConfig.endpointID`, a persisted UUID that is independent of
+  URL, label and credentials.
+- Added one-time Keychain migration for old `active_config` and `all_configs`
+  records. The canonical saved-list ID is reconciled back into the active record;
+  credentials remain in Keychain throughout.
+- Changed active-session persistence to endpoint UUID keys. Existing URL-scoped
+  session pointers migrate on first read and are removed after successful copy.
+- Address edits preserve endpoint identity but clear the old active-session
+  pointer, preventing a session ID from being assumed valid at a new address.
+- Added an independent **Default Voice Server** picker and visible
+  `VOICE DEFAULT` badge. Changing the current chat server does not silently alter
+  the voice default.
+- Added a secret-free app-group endpoint catalog containing UUID and display
+  label only. URLs and API keys are not exposed to App Intents.
+- Added `HermesEndpointEntity`, a generic `StartHermesVoiceIntent`, an
+  endpoint-parameterized intent, and App Shortcut phrases including
+  “Start Hermes” and “Start Hermes on <server>”.
+- Cold and warm intent launches now resolve and connect the exact requested
+  endpoint before opening voice mode. Failure remains pinned to that endpoint
+  and explicitly states that no command was sent elsewhere.
+- Updated the existing Control Widget voice action to target the preferred
+  endpoint through the same handoff.
+- Corrected the upstream README badge and source header to match the actual
+  personal/non-commercial `LICENSE` file.
+
+### Tests added or updated
+
+- Legacy connection records gain a stable ID that survives re-encoding.
+- URL-scoped active sessions migrate to UUID scope and remain isolated.
+- Voice binding requires both stable endpoint identity and address.
+- Reusing the same URL with a different endpoint identity is rejected.
+- Preferred endpoint, public endpoint catalog and pending launch handoff round
+  trip through isolated defaults without serializing URL or API-key fields.
+
+### Verification state
+
+- `git diff --check`: passed.
+- Stale URL-keyed session API call-site search: clean.
+- iOS compile/unit tests: still require macOS/Xcode; not executed here.
+- Siri indexing, cold launch, locked-screen launch and microphone handoff:
+  require physical-device testing before being called verified.
+
+### Next work after this slice
+
+1. Run the full unit suite on macOS and correct any App Intents compiler or
+   metadata diagnostics.
+2. Exercise default, Linux-specific and Mac-specific Siri phrases on device.
+3. Refactor background audio lifecycle without weakening endpoint pinning.
+4. Add the endpoint-aware ActivityKit target and state coordinator.

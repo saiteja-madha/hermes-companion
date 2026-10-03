@@ -135,7 +135,7 @@ struct ConnectionSetupView: View {
                         isDeletingServer = true
                         defer { isDeletingServer = false }
                         await store.deleteConnection(config)
-                        if store.savedConnections.contains(where: { $0.baseURL == config.baseURL }) {
+                        if store.savedConnections.contains(where: { $0.endpointID == config.endpointID }) {
                             testResult = .failure(store.error?.message ?? "The saved server could not be removed. Try again from Settings.")
                         } else {
                             baseURL = ""
@@ -604,7 +604,10 @@ struct ConnectionSetupView: View {
         }
         isTesting = true
         testResult = nil
-        let config = ConnectionConfig(baseURL: baseURL, apiKey: apiKey, label: label)
+        let config = ConnectionConfig(
+            endpointID: initialConfig?.endpointID ?? UUID(),
+            baseURL: baseURL, apiKey: apiKey, label: label
+        )
         let client = HermesAPIClient(config: config)
         do {
             let health = try await client.checkHealth()
@@ -664,14 +667,17 @@ struct ConnectionSetupView: View {
         }
         isTesting = true
         testResult = nil
-        let config = ConnectionConfig(baseURL: baseURL, apiKey: apiKey, label: label)
+        let config = ConnectionConfig(
+            endpointID: initialConfig?.endpointID ?? UUID(),
+            baseURL: baseURL, apiKey: apiKey, label: label
+        )
         
         // If we're editing an existing connection with the same baseURL, update it
-        if let initialConfig = initialConfig, initialConfig.baseURL == baseURL {
+        if let initialConfig = initialConfig {
             do {
                 try KeychainManager.shared.addOrUpdate(config)
                 store.savedConnections = KeychainManager.shared.loadAll()
-                if store.connectionConfig?.baseURL == baseURL {
+                if store.connectionConfig?.endpointID == initialConfig.endpointID {
                     let success = await store.connect(config: config)
                     if success {
                         testResult = .success("Connected — \(label)")

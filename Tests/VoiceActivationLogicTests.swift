@@ -4,11 +4,13 @@ import AVFoundation
 
 final class VoiceActivationLogicTests: XCTestCase {
     func testVoiceEndpointBindingMatchesOnlyCapturedServer() {
-        let linux = ConnectionConfig(baseURL: "https://linux-hermes.example/", apiKey: "linux-key", label: "Linux")
+        let linuxID = UUID()
+        let linux = ConnectionConfig(endpointID: linuxID, baseURL: "https://linux-hermes.example/", apiKey: "linux-key", label: "Linux")
+        let sameLinux = ConnectionConfig(endpointID: linuxID, baseURL: "https://linux-hermes.example", apiKey: "rotated-key", label: "Linux renamed")
         let mac = ConnectionConfig(baseURL: "https://mac-hermes.example", apiKey: "mac-key", label: "Mac")
         let binding = VoiceEndpointBinding(config: linux)
 
-        XCTAssertTrue(binding.matches(linux), "A trailing slash must not change endpoint identity")
+        XCTAssertTrue(binding.matches(sameLinux), "A trailing slash or credential rotation must not change endpoint identity")
         XCTAssertFalse(binding.matches(mac), "A voice turn must never follow the globally selected server")
         XCTAssertFalse(binding.matches(nil))
         XCTAssertEqual(binding.displayName, "Linux")
@@ -18,6 +20,95 @@ final class VoiceActivationLogicTests: XCTestCase {
         let config = ConnectionConfig(baseURL: "https://hermes.example:8642/", apiKey: "key", label: "  ")
 
         XCTAssertEqual(VoiceEndpointBinding(config: config).displayName, "hermes.example")
+    }
+
+    func testVoiceEndpointBindingRejectsReusedURLWithDifferentIdentity() {
+        let first = ConnectionConfig(baseURL: "https://hermes.example", apiKey: "first", label: "Old")
+        let replacement = ConnectionConfig(baseURL: "https://hermes.example", apiKey: "second", label: "Replacement")
+
+        XCTAssertFalse(VoiceEndpointBinding(config: first).matches(replacement))
+    }
+
+    func testExplicitVoiceLaunchNeverFallsBackToCurrentOrPreferredEndpoint() {
+        let linux = ConnectionConfig(baseURL: "https://linux.example", apiKey: "linux", label: "Linux")
+        let mac = ConnectionConfig(baseURL: "https://mac.example", apiKey: "mac", label: "Mac")
+
+        XCTAssertEqual(
+            VoiceLaunchEndpointResolver.resolve(
+                requestedID: linux.endpointID,
+                preferredID: mac.endpointID,
+                current: mac,
+                saved: [mac, linux]
+            ),
+            linux
+        )
+        XCTAssertNil(
+            VoiceLaunchEndpointResolver.resolve(
+                requestedID: UUID(),
+                preferredID: mac.endpointID,
+                current: mac,
+                saved: [mac, linux]
+            ),
+            "A removed explicit endpoint must not fall through to another Hermes instance"
+        )
+    }
+
+    func testGenericVoiceLaunchUsesPreferredThenCurrentEndpoint() {
+        let linux = ConnectionConfig(baseURL: "https://linux.example", apiKey: "linux", label: "Linux")
+        let mac = ConnectionConfig(baseURL: "https://mac.example", apiKey: "mac", label: "Mac")
+
+        XCTAssertEqual(
+            VoiceLaunchEndpointResolver.resolve(
+                requestedID: nil,
+                preferredID: linux.endpointID,
+                current: mac,
+                saved: [mac, linux]
+            ),
+            linux
+        )
+        XCTAssertEqual(
+            VoiceLaunchEndpointResolver.resolve(
+                requestedID: nil,
+                preferredID: nil,
+                current: mac,
+                saved: [mac, linux]
+            ),
+            mac
+        )
+    }
+
+    func testPreferredVoiceEndpointIDRoundTripsWithoutCredentials() {
+        let name = "voice-endpoint-preference-\(UUID())"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let endpointID = UUID()
+
+        VoiceActivationControlConstants.setPreferredEndpointID(endpointID, in: defaults)
+
+        XCTAssertEqual(VoiceActivationControlConstants.preferredEndpointID(in: defaults), endpointID)
+        XCTAssertEqual(defaults.dictionaryRepresentation().count, 1)
+    }
+
+    func testVoiceEndpointCatalogAndPendingLaunchContainOnlyPublicIdentity() {
+        let name = "voice-endpoint-catalog-\(UUID())"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let endpointID = UUID()
+        let endpoint = VoiceEndpointDescriptor(id: endpointID, name: "Linux")
+
+        VoiceActivationControlConstants.cacheEndpoints([endpoint], in: defaults)
+        VoiceActivationControlConstants.requestVoiceLaunch(endpointID: endpointID, in: defaults)
+
+        XCTAssertEqual(VoiceActivationControlConstants.cachedEndpoints(in: defaults), [endpoint])
+        XCTAssertEqual(VoiceActivationControlConstants.pendingEndpointID(in: defaults), endpointID)
+        XCTAssertTrue(defaults.bool(forKey: VoiceActivationControlConstants.openVoicePageKey))
+        let serialized = String(data: defaults.data(forKey: VoiceActivationControlConstants.endpointCatalogKey)!, encoding: .utf8)!
+        XCTAssertFalse(serialized.contains("apiKey"))
+        XCTAssertFalse(serialized.contains("baseURL"))
+
+        VoiceActivationControlConstants.clearPendingVoiceLaunch(in: defaults)
+        XCTAssertNil(VoiceActivationControlConstants.pendingEndpointID(in: defaults))
+        XCTAssertFalse(defaults.bool(forKey: VoiceActivationControlConstants.openVoicePageKey))
     }
 
     @MainActor

@@ -116,9 +116,23 @@ struct RootView: View {
                 // Unreachable saved servers must not delay the selected connection.
                 async let healthChecks: Void = store.checkAllServerHealth()
                 let defaults = SharedDefaults.shared
+                let voiceLaunchRequested = defaults.bool(forKey: VoiceActivationControlConstants.openVoicePageKey)
+                let requestedVoiceEndpointID = VoiceActivationControlConstants.pendingEndpointID(in: defaults)
+                let voiceTarget = VoiceLaunchEndpointResolver.resolve(
+                    requestedID: requestedVoiceEndpointID,
+                    preferredID: store.preferredVoiceEndpointID,
+                    current: store.connectionConfig,
+                    saved: store.savedConnections
+                )
                 let shouldAutoReconnect = defaults.object(forKey: "auto_reconnect_last_server") == nil
                     || defaults.bool(forKey: "auto_reconnect_last_server")
-                if shouldAutoReconnect, store.connectionConfig != nil {
+                if voiceLaunchRequested, let target = voiceTarget {
+                    await store.switchToConnection(target)
+                    if !store.isConnected {
+                        VoiceActivationControlConstants.clearPendingVoiceLaunch(in: defaults)
+                        showServerPicker = true
+                    }
+                } else if shouldAutoReconnect, store.connectionConfig != nil {
                     await store.autoConnect()
                     // If auto-connect failed, show the server picker
                     if !store.isConnected && !store.savedConnections.isEmpty {
@@ -195,7 +209,7 @@ struct ServerPickerView: View {
                         .padding(.horizontal, 32)
 
                     // Server list
-                    ForEach(store.savedConnections, id: \.baseURL) { config in
+                    ForEach(store.savedConnections) { config in
                         serverRow(config)
                     }
 
@@ -278,7 +292,7 @@ struct ServerPickerView: View {
         let health = store.serverHealthStatus[config.baseURL]
         let isOnline = health?.status == .online
         let isChecking = health?.status == .checking
-        let isLastUsed = store.connectionConfig?.baseURL == config.baseURL
+        let isLastUsed = store.connectionConfig?.endpointID == config.endpointID
 
         return Button {
             onSelect(config)
@@ -306,6 +320,14 @@ struct ServerPickerView: View {
                             .foregroundStyle(theme.textPrimary)
                         if isLastUsed {
                             Text("LAST")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundStyle(theme.accent)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(theme.accent.opacity(0.15)))
+                        }
+                        if store.preferredVoiceEndpointID == config.endpointID {
+                            Text("VOICE DEFAULT")
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                                 .foregroundStyle(theme.accent)
                                 .padding(.horizontal, 6)

@@ -325,23 +325,26 @@ the React Native layer. There is no net reduction in work for this project.
 ## Development checklist
 
 - [ ] Configure a personal fork remote; retain `chibitek/HermesCompanion` as `upstream`.
-- [ ] Add Linux endpoint with stable UUID, URL, display name and capabilities.
-- [ ] Add Mac endpoint with stable UUID, URL, display name and capabilities.
+- [ ] Add the real Linux endpoint URL, display name, credentials and capabilities on device.
+- [ ] Add the real Mac endpoint URL, display name, credentials and capabilities on device.
 - [ ] Store each API key in Keychain and keep widget/App Intent metadata secret-free.
-- [ ] Add a preferred/default endpoint and explicit in-app endpoint selector.
+- [x] Add stable endpoint UUIDs with backward-compatible Keychain migration.
+- [x] Keep API keys in Keychain and publish only UUID/label to App Intents.
+- [x] Add a preferred/default endpoint and explicit in-app endpoint selector.
 - [x] Capture and display an immutable endpoint binding when voice mode starts.
 - [x] Reject/stop a voice turn when the active endpoint no longer matches.
-- [ ] Migrate per-URL active sessions to per-endpoint-UUID session records.
-- [ ] Pin voice routing to endpoint UUID, API client identity and session generation.
-- [ ] End voice before endpoint switching; require explicit restart on the new target.
-- [ ] Add endpoint-aware App Entity and Siri/App Shortcut intents.
-- [ ] Add generic default shortcut plus separate Linux and Mac shortcuts.
+- [x] Migrate per-URL active sessions to per-endpoint-UUID session records.
+- [x] Pin voice routing to endpoint UUID and API client identity.
+- [ ] Add an explicit voice-session generation token shared with ActivityKit controls.
+- [x] End voice before endpoint switching; require explicit restart on the new target.
+- [x] Add endpoint-aware App Entity and Siri/App Shortcut intents.
+- [x] Add a generic default shortcut plus an endpoint-parameterized shortcut.
+- [ ] Configure and device-test separate Linux and Mac Siri phrases.
 - [ ] Preserve an explicit voice audio session in supported background/lock states.
 - [ ] Add ActivityKit target and endpoint-aware Live Activity attributes/state.
 - [ ] Synchronize listening/thinking/tool/speaking/muted/reconnecting states.
 - [ ] Add mute/resume/end controls; make endpoint switch open the app safely.
 - [ ] Add offline state, bounded reconnect and explicit retry for the same endpoint.
-- [ ] Never automatically fail over a command to the other Hermes endpoint.
+- [x] Never automatically fail over a command to the other Hermes endpoint.
 - [ ] Add two-server integration tests proving each command reaches only its target.
 - [ ] Test cold/warm Siri activation, lock screen, Bluetooth, interruption and offline cases on device.
-

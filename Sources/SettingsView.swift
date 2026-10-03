@@ -80,7 +80,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .onChange(of: store.connectionConfig?.baseURL) { _, _ in
+            .onChange(of: store.connectionConfig?.endpointID) { _, _ in
                 Task {
                     await store.refreshCapabilities()
                     await loadModels()
@@ -150,7 +150,7 @@ struct SettingsView: View {
                     }
                 } else {
                     Picker("Server", selection: $selectedServerURL) {
-                        ForEach(store.savedConnections, id: \.baseURL) { config in
+                        ForEach(store.savedConnections) { config in
                             Text(config.label.isEmpty ? config.baseURL : config.label)
                                 .tag(config.baseURL)
                         }
@@ -171,7 +171,27 @@ struct SettingsView: View {
                         }
                     }
 
-                    ForEach(store.savedConnections, id: \.baseURL) { config in
+                    Picker("Default Voice Server", selection: Binding(
+                        get: { store.preferredVoiceEndpointID?.uuidString ?? "" },
+                        set: { value in
+                            guard let id = UUID(uuidString: value),
+                                  let endpoint = store.savedConnections.first(where: { $0.endpointID == id }) else { return }
+                            store.setPreferredVoiceEndpoint(endpoint)
+                        }
+                    )) {
+                        ForEach(store.savedConnections) { config in
+                            Text(config.label.isEmpty ? config.baseURL : config.label)
+                                .tag(config.endpointID.uuidString)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(theme.textPrimary)
+
+                    Text("“Start Hermes” uses this endpoint. Endpoint-specific Siri shortcuts can override it explicitly.")
+                        .font(.caption)
+                        .foregroundStyle(theme.textMuted)
+
+                    ForEach(store.savedConnections) { config in
                         HStack {
                             Text(config.label.isEmpty ? config.baseURL : config.label)
                                 .font(.subheadline)

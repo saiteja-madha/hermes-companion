@@ -121,7 +121,7 @@ struct VoiceConversationPage: View {
             rainEaseTimer = nil
             voiceConversation.stopConversation()
         }
-        .onChange(of: store?.connectionConfig?.normalizedBaseURL) { _, _ in
+        .onChange(of: store?.connectionConfig?.endpointID) { _, _ in
             guard !endpoint.matches(store?.connectionConfig) else { return }
             FileLogger.shared.log("VoicePage: endpoint changed while voice mode was active; ending bound session")
             voiceConversation.stopConversation()

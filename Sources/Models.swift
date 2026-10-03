@@ -57,11 +57,15 @@ struct FileLogger {
 // MARK: - Connection
 
 struct ConnectionConfig: Codable, Identifiable, Equatable {
+    /// Stable, non-secret identity used to scope sessions, intents and activities.
+    /// The URL may change; credentials and UI state must still belong to the same
+    /// explicitly configured endpoint.
+    var endpointID: UUID
     var baseURL: String
     var apiKey: String
     var label: String
 
-    var id: String { baseURL }
+    var id: UUID { endpointID }
 
     var isValid: Bool {
         guard !baseURL.isEmpty, !apiKey.isEmpty,
@@ -77,10 +81,11 @@ struct ConnectionConfig: Codable, Identifiable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case baseURL, apiKey, label
+        case endpointID, baseURL, apiKey, label
     }
 
-    init(baseURL: String, apiKey: String, label: String) {
+    init(endpointID: UUID = UUID(), baseURL: String, apiKey: String, label: String) {
+        self.endpointID = endpointID
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.label = label
@@ -88,6 +93,7 @@ struct ConnectionConfig: Codable, Identifiable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        endpointID = try c.decodeIfPresent(UUID.self, forKey: .endpointID) ?? UUID()
         baseURL = try c.decode(String.self, forKey: .baseURL)
         apiKey = try c.decode(String.self, forKey: .apiKey)
         label = try c.decode(String.self, forKey: .label)

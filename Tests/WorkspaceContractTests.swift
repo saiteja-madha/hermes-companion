@@ -2,6 +2,19 @@ import XCTest
 @testable import HermesCompanion
 
 final class WorkspaceContractTests: XCTestCase {
+    func testLegacyConnectionConfigDecodingAssignsStableIdentityOnReencode() throws {
+        let legacy = Data(#"{"baseURL":"https://linux.invalid","apiKey":"secret","label":"Linux"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(ConnectionConfig.self, from: legacy)
+        let roundTripped = try JSONDecoder().decode(
+            ConnectionConfig.self,
+            from: JSONEncoder().encode(decoded)
+        )
+
+        XCTAssertEqual(roundTripped.endpointID, decoded.endpointID)
+        XCTAssertEqual(roundTripped.baseURL, "https://linux.invalid")
+    }
+
     func testBoardCreationNormalizesNativeSlugAndRejectsInvalidPaths() throws {
         var payload = ServerBoardWrite()
         payload.slug = " Engineering_2 "

@@ -38,7 +38,9 @@ struct OpenVoiceModeIntent: AppIntent {
     static let openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
-        SharedDefaults.shared.set(true, forKey: "open_voice_page")
+        VoiceActivationControlConstants.requestVoiceLaunch(
+            endpointID: VoiceActivationControlConstants.preferredEndpointID()
+        )
         NotificationCenter.default.post(name: .openVoiceMode, object: nil)
         return .result()
     }

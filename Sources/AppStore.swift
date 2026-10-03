@@ -60,6 +60,13 @@ final class AppStore: ObservableObject {
 
     /// All saved server connections (most-recently-used first).
     @Published var savedConnections: [ConnectionConfig] = []
+    /// Voice/Siri default. This is independent of the last server used for chat.
+    @Published private(set) var preferredVoiceEndpointID: UUID? = nil
+
+    var preferredVoiceEndpoint: ConnectionConfig? {
+        guard let preferredVoiceEndpointID else { return nil }
+        return savedConnections.first { $0.endpointID == preferredVoiceEndpointID }
+    }
 
     // MARK: - Provider / Model / Thinking preferences
 
@@ -230,6 +237,21 @@ final class AppStore: ObservableObject {
         self.savedConnections = KeychainManager.shared.loadAll()
 
         var initialConfig = KeychainManager.shared.loadActive()
+        if let loadedActive = initialConfig,
+           let canonical = savedConnections.first(where: {
+               $0.endpointID == loadedActive.endpointID ||
+               $0.normalizedBaseURL == loadedActive.normalizedBaseURL
+           }) {
+            // Legacy active_config and all_configs records received independent
+            // generated IDs during migration. The list owns the canonical ID.
+            self.savedConnections = savedConnections
+            try? KeychainManager.shared.save(canonical)
+            initialConfig = canonical
+        } else if let initialConfig {
+            // Very old installs may only have active_config. Promote it into the
+            // endpoint registry so Siri and session scoping can resolve it.
+            self.savedConnections = (try? KeychainManager.shared.addOrUpdate(initialConfig)) ?? [initialConfig]
+        }
         #if DEBUG
         if initialConfig == nil {
             initialConfig = Self.debugConnectionFromEnvironment()
@@ -244,6 +266,7 @@ final class AppStore: ObservableObject {
         } else {
             loadPreferences(for: nil)
         }
+        synchronizePreferredVoiceEndpoint(active: initialConfig)
     }
 
     // MARK: - Server Health Check
@@ -361,6 +384,7 @@ final class AppStore: ObservableObject {
 
     func connect(config: ConnectionConfig) async -> Bool {
         isLoadingConnection = true
+        let previousConfig = savedConnections.first { $0.endpointID == config.endpointID }
         let client = makeClient(config)
         self.apiClient = client
         connectionRecoveryEnabled = false
@@ -376,15 +400,30 @@ final class AppStore: ObservableObject {
             let capabilities = try await client.getCapabilities()
             guard apiClient === client, !Task.isCancelled else { return false }
             // Persist: add/update in the multi-connection list, then mark as active.
+            var connectedConfig = config
             do {
                 let updated = try KeychainManager.shared.addOrUpdate(config)
                 self.savedConnections = updated
-                try KeychainManager.shared.setActive(baseURL: config.baseURL)
+                connectedConfig = updated.first(where: {
+                    $0.endpointID == config.endpointID || $0.normalizedBaseURL == config.normalizedBaseURL
+                }) ?? config
+                try KeychainManager.shared.setActive(endpointID: connectedConfig.endpointID)
             } catch {
                 self.error = AppError(message: "Failed to save connection: \(error.localizedDescription)")
             }
-            self.connectionConfig = config
-            loadPreferences(for: config)
+            if let previousConfig,
+               previousConfig.normalizedBaseURL != connectedConfig.normalizedBaseURL {
+                // A stable ID survives a legitimate address edit, but a remote
+                // session ID must never be assumed valid at the new address.
+                activeSessionPersistence.clear(
+                    for: connectedConfig.endpointID,
+                    legacyBaseURL: previousConfig.normalizedBaseURL
+                )
+                FileLogger.shared.log("AppStore: endpoint address changed; cleared its active-session pointer")
+            }
+            self.connectionConfig = connectedConfig
+            synchronizePreferredVoiceEndpoint(active: connectedConfig)
+            loadPreferences(for: connectedConfig)
             self.capabilities = capabilities
             await refreshSessions()
             guard apiClient === client, !Task.isCancelled else { return false }
@@ -439,7 +478,7 @@ final class AppStore: ObservableObject {
     /// the current session state and reconnects to the new server.
     func switchToConnection(_ config: ConnectionConfig) async {
         do {
-            try KeychainManager.shared.setActive(baseURL: config.baseURL)
+            try KeychainManager.shared.setActive(endpointID: config.endpointID)
         } catch {
             self.error = AppError(message: "Failed to set active: \(error.localizedDescription)")
             return
@@ -469,15 +508,42 @@ final class AppStore: ObservableObject {
     /// Remove a saved connection. If it was active, disconnects.
     func deleteConnection(_ config: ConnectionConfig) async {
         do {
-            let updated = try KeychainManager.shared.remove(baseURL: config.baseURL)
+            let updated = try KeychainManager.shared.remove(endpointID: config.endpointID)
             self.savedConnections = updated
+            synchronizePreferredVoiceEndpoint(active: connectionConfig?.endpointID == config.endpointID ? nil : connectionConfig)
         } catch {
             self.error = AppError(message: "Could not remove the saved server from this device: \(error.localizedDescription). The connection has been kept; try again from Settings.")
             return
         }
-        if connectionConfig?.baseURL == config.baseURL {
+        if connectionConfig?.endpointID == config.endpointID {
             disconnect()
         }
+    }
+
+    func setPreferredVoiceEndpoint(_ config: ConnectionConfig) {
+        guard savedConnections.contains(where: { $0.endpointID == config.endpointID }) else { return }
+        preferredVoiceEndpointID = config.endpointID
+        VoiceActivationControlConstants.setPreferredEndpointID(config.endpointID)
+    }
+
+    private func synchronizePreferredVoiceEndpoint(active: ConnectionConfig?) {
+        let stored = VoiceActivationControlConstants.preferredEndpointID()
+        let resolved = stored.flatMap { id in
+            savedConnections.first(where: { $0.endpointID == id })?.endpointID
+        } ?? active.flatMap { candidate in
+            savedConnections.first(where: { $0.endpointID == candidate.endpointID })?.endpointID
+        } ?? savedConnections.first?.endpointID
+        preferredVoiceEndpointID = resolved
+        VoiceActivationControlConstants.setPreferredEndpointID(resolved)
+        VoiceActivationControlConstants.cacheEndpoints(savedConnections.map {
+            VoiceEndpointDescriptor(
+                id: $0.endpointID,
+                name: $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? (URL(string: $0.normalizedBaseURL)?.host ?? "Hermes")
+                    : $0.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        })
+        HermesVoiceShortcuts.updateAppShortcutParameters()
     }
 
     // MARK: - Capabilities
@@ -750,8 +816,8 @@ final class AppStore: ObservableObject {
             sessionProviderOverride = nil
             toolEvents = []
             messages = []
-            if let baseURL = connectionConfig?.normalizedBaseURL {
-                activeSessionPersistence.clear(for: baseURL)
+            if let config = connectionConfig {
+                activeSessionPersistence.clear(for: config.endpointID, legacyBaseURL: config.normalizedBaseURL)
             }
         } catch {
             // A failed probe is not evidence of deletion.
@@ -763,11 +829,13 @@ final class AppStore: ObservableObject {
     /// fresh isolated session.
     private func restoreActiveSessionIfAvailable() async {
         guard activeSession == nil,
-              let baseURL = connectionConfig?.normalizedBaseURL,
-              let savedID = activeSessionPersistence.load(for: baseURL) else { return }
+              let config = connectionConfig,
+              let savedID = activeSessionPersistence.load(
+                  for: config.endpointID, legacyBaseURL: config.normalizedBaseURL
+              ) else { return }
 
         guard let savedSession = sessions.first(where: { $0.id == savedID }) else {
-            activeSessionPersistence.clear(for: baseURL)
+            activeSessionPersistence.clear(for: config.endpointID, legacyBaseURL: config.normalizedBaseURL)
             return
         }
         await selectSession(savedSession)
@@ -810,8 +878,8 @@ final class AppStore: ObservableObject {
             return
         }
         self.activeSession = session
-        if let baseURL = connectionConfig?.normalizedBaseURL {
-            activeSessionPersistence.save(sessionID: session.id, for: baseURL)
+        if let config = connectionConfig {
+            activeSessionPersistence.save(sessionID: session.id, for: config.endpointID)
         }
         self.messages = []
         lastSyncedHistory = []
@@ -1007,8 +1075,8 @@ final class AppStore: ObservableObject {
                 sessionProviderOverride = nil
                 toolEvents = []
                 messages = []
-                if let baseURL = connectionConfig?.normalizedBaseURL {
-                    activeSessionPersistence.clear(for: baseURL)
+                if let config = connectionConfig {
+                    activeSessionPersistence.clear(for: config.endpointID, legacyBaseURL: config.normalizedBaseURL)
                 }
             }
         } catch {
@@ -1086,8 +1154,8 @@ final class AppStore: ObservableObject {
             sessionProviderOverride = nil
             toolEvents = []
             messages = []
-            if let baseURL = connectionConfig?.normalizedBaseURL {
-                activeSessionPersistence.clear(for: baseURL)
+            if let config = connectionConfig {
+                activeSessionPersistence.clear(for: config.endpointID, legacyBaseURL: config.normalizedBaseURL)
             }
         }
     }
@@ -1678,8 +1746,8 @@ final class AppStore: ObservableObject {
             sessionRefreshID = UUID()
             self.sessions.insert(newSession, at: 0)
             self.activeSession = newSession
-            if let baseURL = connectionConfig?.normalizedBaseURL {
-                activeSessionPersistence.save(sessionID: newSession.id, for: baseURL)
+            if let config = connectionConfig {
+                activeSessionPersistence.save(sessionID: newSession.id, for: config.endpointID)
             }
             return newSession
         } catch {
@@ -1997,7 +2065,9 @@ final class AppStore: ObservableObject {
         }
         let env = ProcessInfo.processInfo.environment
         components.host = env["API_SERVER_HOST"].flatMap { ($0.isEmpty || $0 == "0.0.0.0") ? nil : $0 } ?? "100.x.x.x"
-        return ConnectionConfig(baseURL: components.url?.absoluteString ?? config.baseURL, apiKey: config.apiKey, label: config.label)
+        return ConnectionConfig(endpointID: config.endpointID,
+            baseURL: components.url?.absoluteString ?? config.baseURL,
+            apiKey: config.apiKey, label: config.label)
     }
     #else
     private static func debugReachableConfig(_ config: ConnectionConfig) -> ConnectionConfig {

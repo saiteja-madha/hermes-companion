@@ -8,23 +8,30 @@ struct ActiveSessionPersistence {
         self.defaults = defaults
     }
 
-    func save(sessionID: String, for baseURL: String) {
-        defaults.set(sessionID, forKey: key(for: baseURL))
+    func save(sessionID: String, for endpointID: UUID) {
+        defaults.set(sessionID, forKey: key(for: endpointID))
     }
 
-    func load(for baseURL: String) -> String? {
-        defaults.string(forKey: key(for: baseURL))
+    /// Load endpoint-scoped state and migrate the former URL-scoped key once.
+    func load(for endpointID: UUID, legacyBaseURL: String? = nil) -> String? {
+        if let current = defaults.string(forKey: key(for: endpointID)) { return current }
+        guard let legacyBaseURL,
+              let legacy = defaults.string(forKey: legacyKey(for: legacyBaseURL)) else { return nil }
+        save(sessionID: legacy, for: endpointID)
+        defaults.removeObject(forKey: legacyKey(for: legacyBaseURL))
+        return legacy
     }
 
-    func clear(for baseURL: String) {
-        defaults.removeObject(forKey: key(for: baseURL))
+    func clear(for endpointID: UUID, legacyBaseURL: String? = nil) {
+        defaults.removeObject(forKey: key(for: endpointID))
+        if let legacyBaseURL { defaults.removeObject(forKey: legacyKey(for: legacyBaseURL)) }
     }
 
-    private func key(for baseURL: String) -> String {
-        keyPrefix + normalized(baseURL)
+    private func key(for endpointID: UUID) -> String {
+        keyPrefix + endpointID.uuidString.lowercased()
     }
 
-    private func normalized(_ baseURL: String) -> String {
-        baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    private func legacyKey(for baseURL: String) -> String {
+        keyPrefix + baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 }

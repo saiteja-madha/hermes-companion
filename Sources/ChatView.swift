@@ -23,6 +23,7 @@ struct ChatView: View {
     @StateObject private var voiceConversation = VoiceConversationManager()
     @State private var showVoicePage = false
     @State private var voiceEndpoint: VoiceEndpointBinding?
+    @State private var isHandlingVoiceLaunch = false
     @StateObject private var wakePhraseListener = WakePhraseListener()
     @AppStorage("hey_hermes_enabled", store: SharedDefaults.shared) private var heyHermesEnabled = false
 
@@ -201,10 +202,15 @@ struct ChatView: View {
             }
             if heyHermesEnabled { wakePhraseListener.start() }
             Task { await store.refreshSkills() }
+            if SharedDefaults.shared.bool(forKey: VoiceActivationControlConstants.openVoicePageKey) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    openRequestedVoiceConversation()
+                }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openVoiceMode)) { _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                openVoiceConversation()
+                openRequestedVoiceConversation()
             }
         }
         .onDisappear {
@@ -226,10 +232,9 @@ struct ChatView: View {
            switch phase {
            case .active:
                wakePhraseListener.resumeFromBackground()
-               if SharedDefaults.shared.bool(forKey: "open_voice_page") {
-                   SharedDefaults.shared.set(false, forKey: "open_voice_page")
+               if SharedDefaults.shared.bool(forKey: VoiceActivationControlConstants.openVoicePageKey) {
                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                       openVoiceConversation()
+                       openRequestedVoiceConversation()
                     }
                  }
            case .background:
@@ -560,6 +565,61 @@ struct ChatView: View {
         wakePhraseListener.allowAfterExplicitVoiceRequest()
         voiceEndpoint = VoiceEndpointBinding(config: config)
         showVoicePage = true
+    }
+
+    /// Resolve a Siri/Shortcut request to one exact endpoint before opening the
+    /// microphone. The request never falls through to a different online server.
+    private func openRequestedVoiceConversation() {
+        guard !isHandlingVoiceLaunch else { return }
+        isHandlingVoiceLaunch = true
+        let target = VoiceLaunchEndpointResolver.resolve(
+            requestedID: VoiceActivationControlConstants.pendingEndpointID(),
+            preferredID: store.preferredVoiceEndpointID,
+            current: store.connectionConfig,
+            saved: store.savedConnections
+        )
+
+        guard let target else {
+            isHandlingVoiceLaunch = false
+            VoiceActivationControlConstants.clearPendingVoiceLaunch()
+            store.error = AppError(message: "The requested Hermes server is no longer configured. Choose a voice server in Settings.")
+            return
+        }
+
+        if voiceConversation.isConversing,
+           voiceEndpoint?.endpointID == target.endpointID,
+           store.isConnected {
+            VoiceActivationControlConstants.clearPendingVoiceLaunch()
+            isHandlingVoiceLaunch = false
+            return
+        }
+
+        if voiceConversation.isConversing {
+            voiceConversation.stopConversation()
+            showVoicePage = false
+            voiceEndpoint = nil
+        }
+
+        guard store.connectionConfig?.endpointID == target.endpointID, store.isConnected else {
+            // Switching makes RootView replace this ChatView with ConnectingView.
+            // Leave the launch request pending; the newly constructed ChatView
+            // consumes it only after the exact endpoint is connected.
+            Task { @MainActor in
+                await store.switchToConnection(target)
+                guard store.isConnected, store.connectionConfig?.endpointID == target.endpointID else {
+                    VoiceActivationControlConstants.clearPendingVoiceLaunch()
+                    store.error = AppError(message: "Could not start voice mode because \(target.label.isEmpty ? "the selected Hermes server" : target.label) is unavailable. No command was sent to another server.")
+                    isHandlingVoiceLaunch = false
+                    return
+                }
+                isHandlingVoiceLaunch = false
+            }
+            return
+        }
+
+        VoiceActivationControlConstants.clearPendingVoiceLaunch()
+        isHandlingVoiceLaunch = false
+        openVoiceConversation()
     }
 
     // MARK: - Send
