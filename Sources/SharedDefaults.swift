@@ -68,4 +68,5 @@ struct VoiceEndpointDescriptor: Codable, Equatable, Identifiable, Sendable {
 
 extension Notification.Name {
     static let openVoiceMode = Notification.Name("com.chibitek.hermescompanion.openVoiceMode")
+    static let voiceActivityAction = Notification.Name("com.chibitek.hermescompanion.voiceActivityAction")
 }

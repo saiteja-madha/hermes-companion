@@ -29,6 +29,11 @@ targets:
         CFBundleDisplayName: Hermes
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSSupportsLiveActivities: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.chibitek.hermescompanion.voice
+            CFBundleURLSchemes:
+              - hermes-companion
         NSMicrophoneUsageDescription: "Microphone access lets Hermes hear voice messages, detect Hey Hermes while the app is open, and continue a voice conversation you explicitly started."
         NSCameraUsageDescription: "Camera is used to send photos to Hermes for analysis."
         NSSpeechRecognitionUsageDescription: "Speech recognition is used to transcribe your voice messages."
@@ -87,6 +92,8 @@ targets:
         excludes:
           - "Info.plist"
       - path: Sources/SharedDefaults.swift
+      - path: Sources/HermesVoiceActivityAttributes.swift
+      - path: Sources/HermesVoiceActivityIntents.swift
     info:
       path: ControlWidget/Info.plist
       properties:

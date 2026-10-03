@@ -199,3 +199,73 @@ intended configuration, not device-level proof:
 3. Execute the macOS compile/unit gate and physical-device test matrix.
 4. Tune audio policy only from measured device failures; do not add a paid STT
    service or another backend pre-emptively.
+
+## 2026-10-03 — Phase 4 implemented in source: voice Live Activity
+
+### Existing behavior reused
+
+- The existing `HermesControlWidget` extension now hosts the ActivityKit widget;
+  no second extension, backend, APNs integration, or relay was added.
+- The endpoint-pinned `VoiceEndpointBinding`, per-conversation UUID, App Group,
+  and App Intents foundation from phases 1–3 provide the identity and process
+  handoff needed by the Live Activity.
+- Generic `AppStore.toolEvents` drive tool progress without exposing tool input,
+  output, commands, paths, prompts, or response text on the Lock Screen.
+
+### Changes
+
+- Added `HermesVoiceActivityAttributes`, shared byte-for-byte by the app and
+  widget targets. Immutable attributes contain only conversation UUID, endpoint
+  UUID, a bounded display name and start time. Dynamic state contains only a
+  phase, tool count, mute flag and update time.
+- Added `VoiceLiveActivityCoordinator` to start, coalesce, update and end exactly
+  one activity for the active voice conversation. A new app launch removes
+  orphaned cards because an in-process microphone session cannot survive process
+  death.
+- Added Lock Screen, compact, minimal and expanded Dynamic Island layouts with
+  endpoint identity and listening, thinking, generic tool-use, speaking, paused,
+  reconnecting, failure and ended presentation states.
+- Added interactive mute/resume and end buttons using `LiveActivityIntent`,
+  which Apple documents as executing in the main app process. Every action must
+  match both the conversation UUID and endpoint UUID and expires after 30
+  seconds; mismatches are consumed and discarded rather than reaching a later
+  session.
+- Added real microphone mute/resume behavior to `VoiceConversationManager` and
+  mirrored it in the full-screen voice UI. Muting stops input and recognition;
+  it does not cut off Hermes TTS already in progress.
+- Added an endpoint-scoped `hermes-companion://voice?endpoint=<UUID>` deep link.
+  Tapping an activity uses the existing exact endpoint resolver and therefore
+  never falls back from an unavailable Linux endpoint to Mac or vice versa.
+- Enabled `NSSupportsLiveActivities`, added the URL scheme, and updated both
+  `project.yml` and the checked-in Xcode project. This runner has no XcodeGen, so
+  keeping both representations synchronized is intentional.
+
+### Tests added
+
+- Phase precedence and nonnegative tool counts.
+- Endpoint display-name bounding and single-line sanitization.
+- Endpoint deep-link round-trip and foreign-scheme rejection.
+- Exact conversation/endpoint action matching, stale-action rejection, and
+  destructive consumption of mismatched actions.
+- Muted conversations cannot be restarted by foreground recovery.
+
+### Verification state
+
+- `git diff --check`: passed during implementation.
+- Static project membership checks confirm shared ActivityKit files are in both
+  the app and widget targets and the coordinator is app-only.
+- No endpoint URL, credential, prompt, transcript, response body, tool name,
+  command or tool output is present in ActivityKit state.
+- iOS compilation, App Intents metadata extraction, widget rendering and button
+  execution remain unverified because this Linux runner has no Xcode/Swift SDK.
+- Apple documents that `LiveActivityIntent` runs in the app process, but locked
+  devices require authentication before interactive buttons execute. Exact
+  lock-screen behavior remains a physical-device gate.
+
+### Next work after this slice
+
+1. Compile and run tests on macOS; correct any ActivityKit/App Intents metadata
+   diagnostics before adding polish.
+2. Execute the endpoint, Siri, background audio and Dynamic Island device matrix.
+3. Add bounded reconnect state only if device/network tests expose a gap; never
+   auto-fail over to the other Hermes endpoint.

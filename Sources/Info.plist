@@ -6,6 +6,17 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Hermes</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.chibitek.hermescompanion.voice</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>hermes-companion</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -29,6 +40,8 @@
 	<string>Camera is used to send photos to Hermes for analysis.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Microphone access lets Hermes hear voice messages, detect Hey Hermes while the app is open, and continue a voice conversation you explicitly started.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Speech recognition is used to transcribe your voice messages.</string>
 	<key>UIApplicationSceneManifest</key>

@@ -21,6 +21,7 @@ struct ChatView: View {
     @State private var showFilePicker = false
     @State private var showCameraPicker = false
     @StateObject private var voiceConversation = VoiceConversationManager()
+    @StateObject private var voiceLiveActivity = VoiceLiveActivityCoordinator()
     @State private var showVoicePage = false
     @State private var voiceEndpoint: VoiceEndpointBinding?
     @State private var isHandlingVoiceLaunch = false
@@ -182,6 +183,7 @@ struct ChatView: View {
                 if let endpoint = voiceEndpoint {
                     VoiceConversationPage(
                         voiceConversation: voiceConversation,
+                        liveActivity: voiceLiveActivity,
                         endpoint: endpoint,
                         store: store,
                         onVoiceTranscription: { transcription in

@@ -17,6 +17,7 @@ struct HermesCompanionApp: App {
                 .tint(appearance.accent)
                 .task {
                     ControlCenter.shared.reloadControls(ofKind: VoiceActivationControlConstants.kind)
+                    VoiceLiveActivityCoordinator.endOrphanedActivitiesAtLaunch()
                     // CarPlay voice controller shares this store.
                     CarPlayVoiceController.shared.attach(store: store)
                     // Request notification permission so we can alert the
@@ -144,6 +145,11 @@ struct RootView: View {
                 }
                 await healthChecks
             }
+        }
+        .onOpenURL { url in
+            guard let endpointID = HermesVoiceActivityDeepLink.endpointID(from: url) else { return }
+            VoiceActivationControlConstants.requestVoiceLaunch(endpointID: endpointID)
+            NotificationCenter.default.post(name: .openVoiceMode, object: nil)
         }
         .alert("What's New in Hermes \(currentVersion)", isPresented: $showReleaseNotes) {
             Button("Got It") {

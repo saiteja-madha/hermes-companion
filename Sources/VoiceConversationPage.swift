@@ -49,8 +49,9 @@ struct CyberpunkVoicePreset: Identifiable, CaseIterable, Equatable {
 
 struct VoiceConversationPage: View {
     @ObservedObject var voiceConversation: VoiceConversationManager
+    @ObservedObject var liveActivity: VoiceLiveActivityCoordinator
     let endpoint: VoiceEndpointBinding
-    var store: AppStore? = nil
+    @ObservedObject var store: AppStore
     var onVoiceTranscription: ((String) -> Void)? = nil
     var onClose: (() -> Void)? = nil
 
@@ -101,6 +102,8 @@ struct VoiceConversationPage: View {
             // Sync voice settings from UserDefaults (Settings > Voice)
             voiceConversation.syncVoiceSettings()
             startVoiceConversationIfNeeded()
+            syncLiveActivityStart()
+            handlePendingLiveActivityAction()
             rainEaseTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
                 Task { @MainActor in
                     let delta = rainIntensity - easedRain
@@ -119,10 +122,25 @@ struct VoiceConversationPage: View {
             UIApplication.shared.isIdleTimerDisabled = false
             rainEaseTimer?.invalidate()
             rainEaseTimer = nil
+            liveActivity.end()
             voiceConversation.stopConversation()
         }
-        .onChange(of: store?.connectionConfig?.endpointID) { _, _ in
-            guard !endpoint.matches(store?.connectionConfig) else { return }
+        .onChange(of: voiceConversation.conversationID) { _, conversationID in
+            if conversationID == nil {
+                liveActivity.end()
+            } else {
+                syncLiveActivityStart()
+            }
+        }
+        .onChange(of: activitySignal) { _, signal in
+            guard voiceConversation.conversationID != nil else { return }
+            liveActivity.update(signal)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .voiceActivityAction)) { _ in
+            handlePendingLiveActivityAction()
+        }
+        .onChange(of: store.connectionConfig?.endpointID) { _, _ in
+            guard !endpoint.matches(store.connectionConfig) else { return }
             FileLogger.shared.log("VoicePage: endpoint changed while voice mode was active; ending bound session")
             voiceConversation.stopConversation()
             onClose?()
@@ -215,6 +233,7 @@ struct VoiceConversationPage: View {
     }
 
     private var statusLabel: String {
+        if voiceConversation.isMuted { return "MIC MUTED" }
         if voiceConversation.isThinking { return "THINKING..." }
         if voiceConversation.isSpeaking { return "SPEAKING..." }
         if voiceConversation.isListening { return "LISTENING..." }
@@ -225,8 +244,25 @@ struct VoiceConversationPage: View {
     // MARK: - Bottom Controls
 
     private var bottomControls: some View {
-        // Controls: center END (green, ends the voice session -> back to Chat)
+        // Keep the same mute/end controls in-app and in the expanded Live Activity.
         HStack(spacing: 26) {
+            VStack(spacing: 7) {
+                Button {
+                    voiceConversation.setMuted(!voiceConversation.isMuted)
+                } label: {
+                    Image(systemName: voiceConversation.isMuted ? "mic.fill" : "mic.slash.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(preset.primary)
+                        .frame(width: 56, height: 56)
+                        .background(preset.primary.opacity(0.12), in: Circle())
+                        .overlay(Circle().stroke(preset.primary.opacity(0.5), lineWidth: 1))
+                }
+                .accessibilityLabel(voiceConversation.isMuted ? "Resume microphone" : "Mute microphone")
+                Text(voiceConversation.isMuted ? "RESUME" : "MUTE")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(preset.primary)
+            }
+
             // END button
             VStack(spacing: 7) {
                 Button {
@@ -273,6 +309,52 @@ struct VoiceConversationPage: View {
                 onVoiceTranscription?(text)
             }
         )
+    }
+
+    private var activitySignal: HermesVoiceActivitySignal {
+        let events = store.toolEvents
+        let activeTool = events.last.map {
+            $0.type == .started || $0.type == .progress
+        } ?? false
+        return HermesVoiceActivityStateResolver.resolve(
+            isConversing: voiceConversation.isConversing,
+            isListening: voiceConversation.isListening,
+            isSpeaking: voiceConversation.isSpeaking,
+            isThinking: voiceConversation.isThinking,
+            isMuted: voiceConversation.isMuted,
+            hasError: voiceConversation.voiceError != nil,
+            hasActiveTool: activeTool,
+            toolCount: events.filter { $0.type == .started }.count
+        )
+    }
+
+    private func syncLiveActivityStart() {
+        guard let conversationID = voiceConversation.conversationID else { return }
+        liveActivity.start(
+            conversationID: conversationID,
+            endpoint: endpoint,
+            signal: activitySignal
+        )
+    }
+
+    private func handlePendingLiveActivityAction() {
+        guard let conversationID = voiceConversation.conversationID,
+              let action = HermesVoiceActivityActionHandoff.consume(
+                conversationID: conversationID,
+                endpointID: endpoint.endpointID
+              )
+        else { return }
+
+        switch action {
+        case .mute:
+            voiceConversation.setMuted(true)
+        case .resume:
+            voiceConversation.setMuted(false)
+        case .end:
+            liveActivity.end()
+            voiceConversation.stopConversation()
+            onClose?()
+        }
     }
     
     // MARK: - Transcription Display

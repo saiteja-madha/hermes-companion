@@ -22,9 +22,10 @@ enum VoiceConversationLifecyclePolicy {
         isConversing: Bool,
         isListening: Bool,
         isSpeaking: Bool,
-        isThinking: Bool
+        isThinking: Bool,
+        isMuted: Bool = false
     ) -> Bool {
-        isConversing && !isListening && !isSpeaking && !isThinking
+        isConversing && !isListening && !isSpeaking && !isThinking && !isMuted
     }
 }
 

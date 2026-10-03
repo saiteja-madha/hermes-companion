@@ -6,5 +6,6 @@ struct HermesControlWidgetBundle: WidgetBundle {
     var body: some Widget {
         VoiceActivationControlWidget()
         VoiceModeControlWidget()
+        HermesVoiceLiveActivityWidget()
     }
 }

@@ -33,6 +33,10 @@ final class VoiceActivationLogicTests: XCTestCase {
         XCTAssertFalse(VoiceConversationLifecyclePolicy.shouldRecoverListening(
             isConversing: true, isListening: false, isSpeaking: false, isThinking: true
         ))
+        XCTAssertFalse(VoiceConversationLifecyclePolicy.shouldRecoverListening(
+            isConversing: true, isListening: false, isSpeaking: false,
+            isThinking: false, isMuted: true
+        ))
     }
 
     @MainActor
@@ -44,6 +48,99 @@ final class VoiceActivationLogicTests: XCTestCase {
 
         XCTAssertTrue(manager.isConversing)
         manager.stopConversation()
+    }
+
+    func testVoiceActivityStateUsesPrivacySafePhasePrecedence() {
+        XCTAssertEqual(
+            HermesVoiceActivityStateResolver.resolve(
+                isConversing: true, isListening: false, isSpeaking: false,
+                isThinking: true, isMuted: false, hasError: false,
+                hasActiveTool: true, toolCount: 2
+            ),
+            HermesVoiceActivitySignal(phase: .usingTools, toolCount: 2, isMuted: false)
+        )
+        XCTAssertEqual(
+            HermesVoiceActivityStateResolver.resolve(
+                isConversing: true, isListening: false, isSpeaking: true,
+                isThinking: true, isMuted: true, hasError: true,
+                hasActiveTool: true, toolCount: -1
+            ),
+            HermesVoiceActivitySignal(phase: .speaking, toolCount: 0, isMuted: true),
+            "Spoken error guidance remains visible while the microphone is muted"
+        )
+        XCTAssertEqual(
+            HermesVoiceActivityStateResolver.resolve(
+                isConversing: false, isListening: true, isSpeaking: true,
+                isThinking: true, isMuted: false, hasError: true,
+                hasActiveTool: true, toolCount: 9
+            ).phase,
+            .ended
+        )
+    }
+
+    func testVoiceActivityIdentityIsBoundedAndDeepLinkRoundTrips() {
+        let endpointID = UUID()
+        let unsafeLabel = "  Linux\nsecret-ish status that is far longer than the island allows  "
+        let name = HermesVoiceActivityPrivacy.endpointName(unsafeLabel)
+        let url = HermesVoiceActivityDeepLink.url(endpointID: endpointID)
+
+        XCTAssertLessThanOrEqual(name.count, 32)
+        XCTAssertFalse(name.contains("\n"))
+        XCTAssertEqual(url.flatMap(HermesVoiceActivityDeepLink.endpointID(from:)), endpointID)
+        XCTAssertNil(HermesVoiceActivityDeepLink.endpointID(from: URL(string: "https://example.com")!))
+    }
+
+    func testVoiceActivityActionRequiresExactFreshConversationAndEndpoint() {
+        let suiteName = "voice-activity-action-\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let conversationID = UUID()
+        let endpointID = UUID()
+        let now = Date()
+
+        HermesVoiceActivityActionHandoff.request(
+            .mute,
+            conversationID: conversationID,
+            endpointID: endpointID,
+            at: now,
+            defaults: defaults
+        )
+        XCTAssertNil(HermesVoiceActivityActionHandoff.consume(
+            conversationID: conversationID,
+            endpointID: UUID(),
+            now: now,
+            defaults: defaults
+        ))
+        XCTAssertNil(defaults.data(forKey: HermesVoiceActivityActionHandoff.key),
+                     "A mismatched action must be discarded instead of reaching a later session")
+
+        HermesVoiceActivityActionHandoff.request(
+            .resume,
+            conversationID: conversationID,
+            endpointID: endpointID,
+            at: now.addingTimeInterval(-31),
+            defaults: defaults
+        )
+        XCTAssertNil(HermesVoiceActivityActionHandoff.consume(
+            conversationID: conversationID,
+            endpointID: endpointID,
+            now: now,
+            defaults: defaults
+        ))
+
+        HermesVoiceActivityActionHandoff.request(
+            .end,
+            conversationID: conversationID,
+            endpointID: endpointID,
+            at: now,
+            defaults: defaults
+        )
+        XCTAssertEqual(HermesVoiceActivityActionHandoff.consume(
+            conversationID: conversationID,
+            endpointID: endpointID,
+            now: now,
+            defaults: defaults
+        ), .end)
     }
 
     func testVoiceEndpointBindingMatchesOnlyCapturedServer() {

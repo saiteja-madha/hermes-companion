@@ -77,10 +77,10 @@ Status legend:
 | Locked-screen voice | **Implemented by documented audio configuration, device-unverified** — `.playAndRecord` plus `audio` background mode and foreground recovery | **Missing** by recording policy | **Unknown** | **Unknown** | Missing |
 | Siri activation | **Implemented, device-unverified in fork** — App Shortcut opens directly into the preferred endpoint’s voice page | **Verified for dictation** — `NewChatVoiceIntent` plus `HermexShortcuts`; does not continue into conversational voice | **Missing** in inspected Swift sources | **Missing for Talk** — App Intents control gateway/model operations, not start Talk | Older New Chat intents; not conversational |
 | Siri endpoint selection | **Implemented, device-unverified in fork** — endpoint entity plus explicit server intent; removed endpoints never fall through | **Partial** — profile intent and server-aware routing exist, but the voice intent is not server-parameterized and is dictation | **Missing** | **Missing** | Partial profile selection only |
-| Dynamic Island / Lock Screen | **Missing** — current extension is a Control Widget, not ActivityKit | **Verified** for agent runs; `AgentRunActivityAttributes` records server and session and widget declares expanded regions | **Implemented, untested** for relay voice state | **Implemented, untested** for relay/host activity state | Implemented at older feature level |
-| Active endpoint in Live Activity | **Missing** | **Partial** — server URL is in attributes for routing; UI is agent-run-centric, not voice-target-centric | **Missing** for multiple endpoints | **Missing** for multiple endpoints | Partial at old head |
-| Interactive Dynamic Island controls | **Missing** | **Partial** — deep-link/activity interactions exist, not voice mute/resume/end | **Partial/unknown** | **Partial/unknown** | Partial at old head |
-| Tool-execution status | **Verified in main app**, missing from Dynamic Island | **Verified** in chat and agent-run Live Activity | **Partial** through relay activity states | **Implemented, untested** — Talk coordinator emits tool activity and Live Activity has phases | Verified in chat/Live Activity at old head |
+| Dynamic Island / Lock Screen | **Implemented, device-unverified in fork** — all ActivityKit presentations share the existing widget extension | **Verified** for agent runs; `AgentRunActivityAttributes` records server and session and widget declares expanded regions | **Implemented, untested** for relay voice state | **Implemented, untested** for relay/host activity state | Implemented at older feature level |
+| Active endpoint in Live Activity | **Implemented, device-unverified in fork** — bounded endpoint label in compact, expanded and Lock Screen views | **Partial** — server URL is in attributes for routing; UI is agent-run-centric, not voice-target-centric | **Missing** for multiple endpoints | **Missing** for multiple endpoints | Partial at old head |
+| Interactive Dynamic Island controls | **Implemented, device-unverified in fork** — exact conversation+endpoint mute/resume/end intents; locked actions require authentication | **Partial** — deep-link/activity interactions exist, not voice mute/resume/end | **Partial/unknown** | **Partial/unknown** | Partial at old head |
+| Tool-execution status | **Implemented, device-unverified in fork** — generic tool phase and count; sensitive details stay in app | **Verified** in chat and agent-run Live Activity | **Partial** through relay activity states | **Implemented, untested** — Talk coordinator emits tool activity and Live Activity has phases | Verified in chat/Live Activity at old head |
 | Modern voice UI | **Verified in source** — full-screen animated Matrix/CRT/orb interface | **Missing** — polished chat/dictation UI only | **Implemented, untested** | **Implemented, untested** | Missing |
 | Additional backend | Optional for core chat/voice; included bridge/patches are needed for some extended workspace/run features | Hermes WebUI/Hermes server; push updates may require server pairing | **Required** relay plus connector | **Required** relay plus connector; Mimo services for native Talk | Same WebUI-oriented backend |
 | Additional paid voice API | **None introduced by iPhone voice path**; Hermes model/provider can still have its own cost | None for on-device dictation; server STT may use configured service | **Yes/likely** — OpenAI Realtime voice session | **Potentially** — Mimo ASR/TTS; legacy OpenAI Realtime remains behind a flag | Same as old Hermex |
@@ -233,19 +233,20 @@ and maintenance cost and should not be chosen pre-emptively.
 
 ### 4. Voice Live Activity / Dynamic Island — medium-high, 4–7 developer-days
 
-Adapt only the ActivityKit presentation/state ideas from Hermex; do not import its
-WebUI run coordinator. Add a dedicated widget extension and shared model:
+Implemented in source using the existing widget extension. The fork adapts only
+the privacy/state-machine lessons from the inspected candidates; it does not
+import their WebUI/relay coordinators or require their infrastructure:
 
 - immutable attributes: endpoint UUID and safe display label;
 - content state: connecting, listening, thinking, tool activity, speaking,
   muted, reconnecting, ended;
-- deep-link/App Intent controls: mute/resume and end;
+- exact endpoint/conversation `LiveActivityIntent` controls: mute/resume and end;
 - expanded endpoint identity and a deliberate “switch” action that opens the app
   and ends the current voice session before selecting another endpoint.
 
-The activity coordinator observes VoiceConversationManager and AppStore tool
-events. It should coalesce updates and never include credentials, full prompts,
-or sensitive response text by default.
+The activity coordinator observes `VoiceConversationManager` and generic
+`AppStore.toolEvents`, coalesces equal states, and never includes credentials,
+endpoint URLs, prompts, transcripts, response text, tool names or tool output.
 
 ### 5. Reliability and endpoint recovery — medium, 3–5 developer-days
 

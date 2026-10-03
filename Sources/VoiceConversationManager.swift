@@ -17,6 +17,7 @@ final class VoiceConversationManager: ObservableObject {
     @Published var isListening = false
     @Published var isSpeaking = false
     @Published var isThinking = false
+    @Published private(set) var isMuted = false
     @Published var transcribedText = ""
     @Published var spokenResponse = ""
     @Published var hasPermission = false
@@ -233,6 +234,7 @@ final class VoiceConversationManager: ObservableObject {
         pendingConversationStartID = nil
         if !isConversing {
             conversationID = UUID()
+            isMuted = false
         }
         isConversing = true
         voiceError = nil
@@ -246,6 +248,7 @@ final class VoiceConversationManager: ObservableObject {
         pendingConversationStartID = nil
         isConversing = false
         conversationID = nil
+        isMuted = false
         stopListening()
         stopSpeaking()
         stopBargeInMonitoring()
@@ -345,8 +348,24 @@ final class VoiceConversationManager: ObservableObject {
 
     // MARK: - Listening
 
+    func setMuted(_ muted: Bool) {
+        guard isConversing, isMuted != muted else { return }
+        isMuted = muted
+
+        if muted {
+            stopListening()
+            stopBargeInMonitoring()
+            FileLogger.shared.log("VoiceManager: microphone muted")
+            return
+        }
+
+        FileLogger.shared.log("VoiceManager: microphone resumed")
+        scheduleListeningRecovery(reason: "user resumed microphone", delayNanoseconds: 100_000_000)
+    }
+
     func startListening() {
         guard isConversing else { FileLogger.shared.log("VoiceManager: startListening bail — not conversing"); return }
+        guard !isMuted else { FileLogger.shared.log("VoiceManager: startListening bail — microphone muted"); return }
         // If currently speaking, stop TTS first (barge-in by button tap)
         if isSpeaking {
             stopSpeaking()
@@ -805,7 +824,9 @@ final class VoiceConversationManager: ObservableObject {
         synthesizer.speak(utterance)
 
         // Start monitoring mic for barge-in (user interrupting the AI)
-        startBargeInMonitoring()
+        if !isMuted {
+            startBargeInMonitoring()
+        }
     }
     
     func stopSpeaking() {
@@ -834,7 +855,7 @@ final class VoiceConversationManager: ObservableObject {
         activeSystemUtterance = nil
         isSpeaking = false
         stopBargeInMonitoring()
-        guard resumeListening, isConversing else { return }
+        guard resumeListening, isConversing, !isMuted else { return }
         do {
             try await Task.sleep(nanoseconds: 50_000_000)
         } catch { return }
@@ -878,7 +899,8 @@ final class VoiceConversationManager: ObservableObject {
             isConversing: isConversing,
             isListening: isListening,
             isSpeaking: isSpeaking,
-            isThinking: isThinking
+            isThinking: isThinking,
+            isMuted: isMuted
         ) else { return }
 
         let expectedConversationID = conversationID
@@ -892,7 +914,8 @@ final class VoiceConversationManager: ObservableObject {
                     isConversing: self.isConversing,
                     isListening: self.isListening,
                     isSpeaking: self.isSpeaking,
-                    isThinking: self.isThinking
+                    isThinking: self.isThinking,
+                    isMuted: self.isMuted
                   )
             else { return }
             FileLogger.shared.log("VoiceManager: recovering listening after \(reason)")

@@ -42,6 +42,29 @@ voice verified. Use two distinguishable test gateways named **Linux** and
 - [ ] Enable “Hey Hermes,” background the app without opening voice mode, and
   confirm wake listening does not continue.
 
+## Live Activity and Dynamic Island
+
+- [ ] Confirm one Live Activity begins only after an explicit voice conversation
+  starts and disappears immediately when that conversation ends.
+- [ ] Verify Lock Screen, compact, minimal and expanded Dynamic Island layouts on
+  devices with and without Dynamic Island; endpoint identity must remain visible
+  wherever space permits.
+- [ ] Observe listening → thinking → using tools → speaking → listening and
+  confirm the phase never displays prompts, transcript text, response text, tool
+  names, commands, paths, URLs or credentials.
+- [ ] Mute and resume from the expanded island and Lock Screen. Confirm only the
+  matching conversation on the displayed endpoint changes microphone state.
+- [ ] End from the expanded island and Lock Screen. Confirm audio input, TTS and
+  the Live Activity all stop. Record when iOS requires device authentication.
+- [ ] Tap a Linux activity while Mac is selected in the app; the app must route
+  back to Linux or show Linux unavailable, never silently open voice on Mac.
+- [ ] End voice, start a new conversation, then invoke a stale action captured
+  from the prior activity; it must not affect the new conversation.
+- [ ] Force-quit during voice mode and relaunch. Confirm the orphaned activity is
+  removed before a new conversation starts.
+- [ ] Disable Live Activities in Settings. Voice must continue normally without
+  a card, crash, or repeated authorization prompt.
+
 ## Audio routes and interruptions
 
 - [ ] Repeat a two-turn locked-screen conversation on the built-in microphone,
